@@ -410,7 +410,7 @@ export class FollowDrops {
 						item.stream.user_login +
 						' | ' +
 						item.title +
-						(isPriority(item, this.twitch.config.scheduler?.priorityReward) ? ' | PRIORITY' : ' | deadline plan')
+						(isPriority(item, this.twitch.config.scheduler?.priorityReward) ? ' | PRIORITY' : ' | watching')
 				)
 				await this.updateProgress(item)
 			}

@@ -91,7 +91,7 @@ async function main() {
 					['--scan-follows', 'Read-only scan for rewards on followed live channels'],
 					['--eligible-channels', 'List eligible rewards, channels, progress and UTC dates'],
 					['--channels', 'List ALL followed channels, including offline'],
-					['--plan', 'Show deadline plan, priority, history estimates and risks'],
+					['--plan', 'Show reward order, priority, stream estimates and progress'],
 					['--set-priority <value>', 'Save priority name/ID, or none; reloads within 3 min'],
 					['--test-notifications', 'Send a test to configured notification destinations'],
 					['--gen-token', 'Sign in to Twitch and save the config']

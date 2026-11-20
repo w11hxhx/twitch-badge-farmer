@@ -1,20 +1,20 @@
-# Twitch Channel Badge Farmer
+# Badge Farmer
 
-[Русский](README.ru.md) · [Releases](https://github.com/w11hxhx/twitch-badge-farmer/releases) · [Changelog RU/EN](RELEASE_NOTES.md)
+[Русская версия](README.ru.md)
 
 A fork of [FrostyDeFreeze/twitch-badge-farmer](https://github.com/FrostyDeFreeze/twitch-badge-farmer),
 focused on **channel watch-time badges and Twitch Drops**.
 
 The original project collects global Twitch badges. This fork adds discovery of
-rewards on followed channels and a scheduler that decides what to watch using
-remaining watch time, deadlines and recent streaming history. You can pin a reward
+rewards on followed channels and chooses what to watch using remaining watch
+time, reward expiration and recent streaming history. You can pin a reward
 that should receive as much eligible viewing time as possible.
 
 ## What this fork adds
 
 - **Channel reward discovery.** Scans followed live channels, filters free eligible
   rewards and merges duplicates returned by Twitch's two reward APIs.
-- **Deadline planning.** Recalculates the viewing order using remaining minutes,
+- **Automatic channel selection.** Recalculates the viewing order using remaining minutes,
   expiration, current stream age and estimated future airtime. Reports competing
   deadlines and rewards that are unlikely to finish in time.
 - **Stream-duration estimates.** Reads public recent aggregates from
@@ -31,7 +31,7 @@ that should receive as much eligible viewing time as possible.
   Discord events and a generic HTTPS webhook. No notification destination is enabled
   until configured.
 - **Persistent state.** Known offline rewards, public history caches and progress
-  snapshots for external dashboards survive restarts. Reward collection is confirmed
+  progress survive restarts. Reward collection is confirmed
   by Twitch rather than inferred from local elapsed time.
 
 ## Install
@@ -84,8 +84,37 @@ Every command accepts `--config /path/account.json`. `--channels` includes offli
 follows. Lists and plans do not watch streams, claim rewards or send notifications.
 A running service reloads a saved priority on its next scan. Times in lists are UTC.
 
-For notification configuration, risk estimates, sidecar formats, scheduling details
-and limitations, see the **[full guide](FOLLOW-DROPS.md)**.
+## Notifications
+
+Notifications are optional. Add only the destinations you want to your config:
+
+```json
+{
+	"notifications": {
+		"telegram": { "token": "123456:BOT_TOKEN", "chatId": "123456" },
+		"discord": { "webhook": "https://discord.com/api/webhooks/123456/WEBHOOK_TOKEN" },
+		"webhook": { "url": "https://example.com/private-hook" }
+	}
+}
+```
+
+Telegram updates a saved progress message and restores its ID after a restart.
+Discord and HTTPS webhooks receive reward events. Test configured destinations:
+
+```sh
+./badge-farmer --test-notifications
+```
+
+## How it works
+
+1. Checks followed channels for eligible free watch rewards.
+2. Reads Twitch progress and combines duplicate reward entries.
+3. Estimates remaining airtime using recent stream statistics from Lurkology.
+4. Keeps a pinned reward active and selects other rewards by their deadlines.
+5. Checks progress on each stream, switches stalled sessions and confirms rewards with Twitch.
+
+The plan is refreshed as channels and progress change. Lurkology estimates are cached;
+missing history uses an explicit fallback estimate. `--plan` shows the source and risk.
 
 ## Build from source
 

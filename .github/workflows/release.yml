@@ -90,7 +90,7 @@ jobs:
                       exit 0
                     fi
                   else
-                    gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG — Deadline planner / Планировщик дедлайнов" --notes-file RELEASE_NOTES.md
+                    gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --notes-file RELEASE_NOTES.md
                   fi
                   gh release upload "$RELEASE_TAG" release/* --clobber
                   gh release edit "$RELEASE_TAG" --draft=false --latest
