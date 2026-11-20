@@ -184,10 +184,16 @@ export class FollowDrops {
 		if (Date.now() >= this.nextProgress) {
 			const inventory = await this.twitch.inventory()
 			const reference = active.stream.drop
-			const group =
+			let group =
 				reference.kind === 'reward-group'
 					? inventory.find(c => c.id === reference.campaignId)?.rewardGroups?.find(g => g.id === reference.id)
 					: undefined
+			if (reference.kind === 'reward-group' && !group) {
+				this.twitch.channelRewards.delete(active.stream.user_id)
+				group = (await this.twitch.channelCampaigns(active.stream.user_id))
+					?.find(c => c.id === reference.campaignId)
+					?.rewardGroups?.find(g => g.id === reference.id)
+			}
 			const progress =
 				reference.kind === 'reward-group'
 					? group?.self
