@@ -42,7 +42,12 @@ export function mergeCandidates(items: Candidate[]) {
 		result.set(key, {
 			...preferred,
 			title: advertised.title,
-			start: Number.isFinite(preferred.start) ? preferred.start : advertised.start,
+			start:
+				Number.isFinite(preferred.start) && Number.isFinite(advertised.start)
+					? Math.max(preferred.start, advertised.start)
+					: Number.isFinite(preferred.start)
+						? preferred.start
+						: advertised.start,
 			end: Math.min(item.end, previous.end)
 		})
 	}
