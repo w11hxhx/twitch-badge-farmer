@@ -1,197 +1,121 @@
-# Deadline planner fork — v1.3.0
+# Twitch Channel Badge Farmer
 
-Deadline scheduling, Lurkology estimates, pinned reward priority, up to two verified playback sessions, editable Telegram progress and optional Discord/HTTPS notifications.
+[Русский](README.ru.md) · [Releases](https://github.com/w11hxhx/twitch-badge-farmer/releases) · [Changelog RU/EN](RELEASE_NOTES.md)
 
-[English guide](FOLLOW-DROPS.md) · [Русская инструкция](FOLLOW-DROPS.ru.md) · [RU/EN release notes](RELEASE_NOTES.md)
+A fork of [FrostyDeFreeze/twitch-badge-farmer](https://github.com/FrostyDeFreeze/twitch-badge-farmer),
+focused on **channel watch-time badges and Twitch Drops**.
 
-The original global-badge mode (`followDrops: false`) is documented below.
+The original project collects global Twitch badges. This fork adds discovery of
+rewards on followed channels and a scheduler that decides what to watch using
+remaining watch time, deadlines and recent streaming history. You can pin a reward
+that should receive as much eligible viewing time as possible.
 
-# Badge Farmer
+## What this fork adds
 
-Collects global Twitch badges that are awarded for watching streams.
+- **Channel reward discovery.** Scans followed live channels, filters free eligible
+  rewards and merges duplicates returned by Twitch's two reward APIs.
+- **Deadline planning.** Recalculates the viewing order using remaining minutes,
+  expiration, current stream age and estimated future airtime. Reports competing
+  deadlines and rewards that are unlikely to finish in time.
+- **Stream-duration estimates.** Reads public recent aggregates from
+  [Lurkology](https://lurkology.com), caches them and exposes fallback estimates when
+  statistics are missing. Estimates are not a published streamer schedule.
+- **Pinned priority.** Keep a chosen reward's channel in a viewing slot whenever it
+  is live and eligible. Change or clear the priority from the command line.
+- **Up to two streams.** Independent playback sessions for different campaigns.
+  Parallel credit is checked against Twitch counters; the secondary is suspended
+  if it interferes with priority progress.
+- **Visible progress and windows.** List followed channels, available rewards,
+  earned/required minutes, opening/closing dates and the current plan; JSON supported.
+- **Optional notifications.** An editable persistent Telegram progress card,
+  Discord events and a generic HTTPS webhook. No notification destination is enabled
+  until configured.
+- **Persistent state.** Known offline rewards, public history caches and progress
+  snapshots for external dashboards survive restarts. Reward collection is confirmed
+  by Twitch rather than inferred from local elapsed time.
 
-[Русская версия](README.ru.md)
+## Install
 
-The program uses Twitch's internal API and the TV app client. Twitch does not officially support this, so use it at your own risk.
+Download an archive from [this fork's releases](https://github.com/w11hxhx/twitch-badge-farmer/releases):
 
-## Installation
+| Platform            | Archive                           |
+| ------------------- | --------------------------------- |
+| Windows x64         | `badge-farmer-windows-x64.zip`    |
+| Linux x64           | `badge-farmer-linux-x64.tar.gz`   |
+| macOS Apple Silicon | `badge-farmer-macos-arm64.tar.gz` |
+| macOS Intel         | `badge-farmer-macos-x64.tar.gz`   |
 
-Download a ready-to-run version from [Releases](https://github.com/w11hxhx/twitch-badge-farmer/releases).
-
-Open the latest release and download the archive for your system from **Assets**.
-
-| System                   | Download                        |
-| ------------------------ | ------------------------------- |
-| Windows x64              | badge-farmer-windows-x64.zip    |
-| Linux x64                | badge-farmer-linux-x64.tar.gz   |
-| macOS with Apple Silicon | badge-farmer-macos-arm64.tar.gz |
-| macOS with an Intel chip | badge-farmer-macos-x64.tar.gz   |
-
-Extract the archive into a folder where you want to keep the program and its settings.
-
-The executable is named `badge-farmer.exe` on Windows and `badge-farmer` on Linux and macOS.
-
-If no release is available yet, follow [Manual installation](#manual-installation).
-
-### Set up your Twitch account
-
-Open a terminal in the extracted folder.
-
-On Windows, open the folder in File Explorer, type `powershell` in the address bar and press **Enter**.
-
-Run this command on Windows:
-
-```powershell
-.\badge-farmer.exe --gen-token
-```
-
-On Linux or macOS, run:
+Extract it and generate a config:
 
 ```sh
 ./badge-farmer --gen-token
 ```
 
-1. Sign in to the Twitch account you want to use in the browser window that opens.
-2. Complete the authorization on Twitch. If prompted, enter the activation code shown in the terminal.
-3. Return to the terminal and wait for the `Config saved` message.
+On Windows use `badge-farmer.exe`. Complete Twitch authorization in your browser.
+Existing valid configuration can be reused. Keep `config.json` private.
 
-If the browser does not open, use the activation link printed in the terminal.
+Add the following settings to the generated config:
 
-The program creates `config.json` with your account details and token, so you do not need to fill in any fields yourself.
+```json
+{
+	"followDrops": true,
+	"scheduler": {
+		"maxConcurrentStreams": 2,
+		"historyEnabled": true
+	}
+}
+```
 
-Keep `config.json` private, since it contains your access token.
+Start `./badge-farmer`. Set `maxConcurrentStreams` to `1` for one stream.
 
-### About the TV token
+## Commands
 
-Badge Farmer uses a **Twitch TV-app OAuth token** obtained through device authorization.
+```sh
+./badge-farmer --channels
+./badge-farmer --eligible-channels
+./badge-farmer --plan
+./badge-farmer --plan --json
+./badge-farmer --set-priority "Reward name"
+./badge-farmer --set-priority none
+./badge-farmer --version
+```
 
-The `--gen-token` command generates this type of token automatically.
+Every command accepts `--config /path/account.json`. `--channels` includes offline
+follows. Lists and plans do not watch streams, claim rewards or send notifications.
+A running service reloads a saved priority on its next scan. Times in lists are UTC.
 
-For manual generation, follow this [device authorization example](https://github.com/rdavydov/Twitch-Channel-Points-Miner-v2/issues/94#issuecomment-1360683876).
+For notification configuration, risk estimates, sidecar formats, scheduling details
+and limitations, see the **[full guide](FOLLOW-DROPS.md)**.
 
-Use the TV Client ID from `config.example.json` in the source files and leave the `scopes` parameter empty to match `--gen-token`.
-
-### Updating
-
-Stop the program before replacing it with a newer version.
-
-Keep your existing `config.json` in the same folder as the new executable, or copy it there if you extract the update into a new folder.
-
-You can reuse this file after an update without generating a new token, as long as the token is still valid.
-
-You can also keep `config.json.state.json`, which stores pauses and daily progress between launches. It is optional: without it the program rebuilds everything from Twitch.
-
-If Twitch later rejects your authorization, run `--gen-token` again and sign in with the same account.
-
-## Manual installation
-
-Use this method if you want to run the program from its source files.
-
-1. Install [Bun](https://bun.sh/docs/installation) 1.4.3 or newer.
-2. Open the [repository](https://github.com/FrostyDeFreeze/twitch-badge-farmer), choose **Code → Download ZIP** and extract it.
-3. Open a terminal in the extracted project folder and install the dependencies:
+## Build from source
 
 ```sh
 bun install --frozen-lockfile
+bun run typecheck
+bun test src
+bun run format:check
+bun run build
 ```
 
-If you already have `config.json`, copy it into the project folder.
+Requires Bun 1.4.3 or newer. Output: `dist/badge-farmer` (Windows: `.exe`).
 
-Otherwise, create it by running this command and following the Twitch authorization steps above.
+## Scope and limitations
 
-```sh
-bun run gen-token
-```
+The followed-channel mode supports ordinary watch-time Drops and single-stage WATCH
+reward groups. Paid rewards are skipped. Set `followDrops: false` to use the original
+catalog-based global badge collector, including its multi-day progression support.
 
-Start the program with `bun run start`, or list available badges with `bun run list`.
+No planner can guarantee every deadline: a channel can stay offline, end early,
+or Twitch can decline concurrent credit. Two opened streams do not guarantee two
+credited streams. The plan exposes these risks and assumes one effective slot until
+parallel progress is confirmed. Run one farmer process per account; other viewers
+or miners on that account can affect credit.
 
-To use the CLI options below, add them to the start command, for example `bun run start --debug` or `bun run start --config account.json`.
+The project uses Twitch's unofficial/internal reward APIs, which can change.
+No purchases, subscriptions or Bits spending are performed.
 
-## Usage
+## Upstream and license
 
-Run commands from the folder containing the program and your `config.json`.
-
-The program runs in the terminal, so keep it open while collecting badges.
-
-Start collecting on Windows:
-
-```powershell
-.\badge-farmer.exe
-```
-
-On Linux or macOS:
-
-```sh
-./badge-farmer
-```
-
-To see available badges without starting a viewing session, add `--list`:
-
-```powershell
-.\badge-farmer.exe --list
-```
-
-On Linux or macOS, use `./badge-farmer` in place of `.\badge-farmer.exe` in the examples.
-
-| Option                  | What it does                                               |
-| ----------------------- | ---------------------------------------------------------- |
-| No option               | Keep collecting badges and checking for new ones           |
-| `--list`                | List available badges without starting a viewing session   |
-| `--gen-token`           | Sign in through Twitch and save your account configuration |
-| `--help`                | Show the available commands                                |
-| `--debug`               | Show technical details and reasons why badges were skipped |
-| `--config account.json` | Use a different configuration file                         |
-
-You can combine `--debug` and `--config` with a mode, for example:
-
-```powershell
-.\badge-farmer.exe --list --debug --config account.json
-```
-
-To set up a separate configuration file, run `.\badge-farmer.exe --gen-token --config account.json`.
-
-Press **Ctrl+C** to stop.
-
-The program saves its state in `config.json.state.json` and uses it on the next launch.
-
-With `--config account.json`, the state file is named `account.json.state.json`.
-
-If there are no badges to collect, the program keeps checking for new ones.
-
-Run only one instance per Twitch account and avoid watching other streams on that account while collecting, otherwise Twitch may count progress incorrectly.
-
-## How it works
-
-1. Checks [StreamDatabase](https://streamdatabase.com) for badges currently awarded for watching and skips badges you already own.
-2. Picks a badge, giving priority to rewards you have already started.
-3. Finds an eligible stream and watches it. If the stream drops or progress stops, it switches to another channel.
-4. Tracks progress through Twitch and checks whether the badge has been added to your account.
-
-A badge is marked as collected only after Twitch confirms that you own it.
-
-### Multi-day badges
-
-Some badges require watching for a set time every day over several days. The program reads completed days and the next window from Twitch, stops watching once the daily requirement is met, and moves on to other available badges.
-
-A day is a rolling 24-hour window, not a calendar date. If you skip a day, completed days are kept, while the minutes of an unfinished day reset when its window closes.
-
-For Pokémon evolutions, the program picks the right evolution path itself and does not change the badges shown in your chat. Each stage requires the badge from the previous stage. If the first stage is awarded for a subscription or a gifted subscription, the program continues the chain only after Twitch has counted that subscription. The program never buys anything.
-
-Keep the program running so it comes back for later windows, or restart it to continue from Twitch's progress. `--list` shows the daily requirement and current progress without starting a viewing session or changing the selected path.
-
-## Limitations
-
-- Only badges awarded for watching are collected. Badges for subscriptions, purchases, Bits, attending TwitchCon and random rewards are skipped.
-- Paid evolutions are collected only if your account already has the badge from the previous stage.
-- Each run works with one account and watches one stream at a time.
-- Badge conditions come from StreamDatabase, where users fill them in. If it lists the wrong number of minutes, the program uses Twitch's number once the reward is clearly identified. If the category, channels or number of days are wrong, the matching reward will not be found.
-
-## Troubleshooting
-
-**`Found 0 available badges`, or a badge is missing from the list.** Run the program with `--debug`. Each skipped badge is listed with its reason, such as `Already owned`, `Paid or unknown cost` or `Event has not started`.
-
-**`Persisted query unavailable | Update the program`.** Twitch has changed its internal requests. Download the latest version of the program.
-
-**`Authorization rejected | Run with --gen-token`.** The token is no longer valid. Run `--gen-token` and sign in with the same account.
-
-**Progress does not increase.** Make sure only one instance is running and nobody is watching other streams on this account. If progress stalls for 5 minutes, the program switches to another channel on its own.
+Based on **[Twitch Badge Farmer by FrostyDeFreeze](https://github.com/FrostyDeFreeze/twitch-badge-farmer)**.
+This repository is a community fork; channel discovery and scheduling are additions
+to the original work. [MIT license](LICENSE).

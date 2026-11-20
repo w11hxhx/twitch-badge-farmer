@@ -1,5 +1,13 @@
 # v1.3.0 — Deadline planner / Планировщик дедлайнов
 
+Форк [Twitch Badge Farmer от FrostyDeFreeze](https://github.com/FrostyDeFreeze/twitch-badge-farmer)
+для бейджей каналов и Drops: поиск наград у фолловов и планирование просмотра по
+дедлайнам, приоритетам и истории эфиров.
+
+A fork of [FrostyDeFreeze's Twitch Badge Farmer](https://github.com/FrostyDeFreeze/twitch-badge-farmer)
+for channel badges and Drops, with followed-channel discovery and viewing plans
+based on deadlines, pinned priorities and stream history.
+
 ## Русский
 
 - Умная очередь вместо алфавитной ротации: дедлайны, остаток просмотра и доступное эфирное время.
