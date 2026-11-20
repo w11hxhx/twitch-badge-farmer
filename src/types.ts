@@ -3,6 +3,8 @@ export interface Config {
 	login: string
 	client_id: string
 	token: string
+	followDrops?: boolean
+	notifications?: { telegram?: { token: string; chatId: string }; discord?: { webhook: string }; webhook?: { url: string } }
 }
 
 export interface Channel {
@@ -43,6 +45,7 @@ export interface GlobalBadge {
 }
 
 export interface DropSelf {
+	dropInstanceID?: string | null
 	currentMinutesWatched: number
 	isClaimed?: boolean
 	hasPreconditionsMet?: boolean

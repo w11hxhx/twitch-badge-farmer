@@ -6,6 +6,8 @@ import { buildTasks, describeSkipped } from './catalog.ts'
 import { fetchJson } from './fetch.ts'
 import { Twitch } from './twitch.ts'
 import { Collector, nextWindowAt } from './collector.ts'
+import { FollowDrops } from './follow-drops.ts'
+import { Notifications } from './notifications.ts'
 import { loadState, saveState } from './state.ts'
 import { createLogger, duration } from './logger.ts'
 import type { Task } from './types.ts'
@@ -32,7 +34,7 @@ function argumentsFor(args: string[]) {
 			index++
 		} else if (argument === '--debug') {
 			debug = true
-		} else if (['--help', '--list', '--gen-token'].includes(argument) && mode === 'start') {
+		} else if (['--help', '--list', '--gen-token', '--scan-follows', '--test-notifications'].includes(argument) && mode === 'start') {
 			mode = argument.slice(2)
 		} else {
 			throw new Error('Unknown argument or conflicting modes | Use --help')
@@ -57,6 +59,8 @@ async function main() {
 				...section('Modes:', [
 					['(none)', 'Collect badges until stopped with Ctrl+C'],
 					['--list', 'Show available badges without watching'],
+					['--scan-follows', 'Read-only scan for rewards on followed live channels'],
+					['--test-notifications', 'Send a test to configured notification destinations'],
 					['--gen-token', 'Sign in to Twitch and save the config']
 				]),
 				'',
@@ -92,6 +96,19 @@ async function main() {
 	const config = validateConfig(await readConfig(configPath))
 
 	log = createLogger({ debug, token: config.token })
+	if (mode === 'test-notifications') {
+		if (!config.notifications || !Object.keys(config.notifications).length) throw new Error('Notifications | No destinations configured')
+		const errors = await new Notifications(config.notifications).send('test', 'Twitch farmer notification test')
+		if (errors.length) throw new Error(errors.join(' | '))
+		log.success('Notification test delivered')
+		return
+	}
+	if (mode === 'scan-follows') {
+		const safe = { ...config }
+		delete safe.notifications
+		await new FollowDrops(new Twitch(safe, controller.signal, log)).scan()
+		return
+	}
 
 	if (mode === 'list') {
 		const twitch = new Twitch(config, controller.signal, log)
@@ -130,14 +147,16 @@ async function main() {
 
 	const statePath = configPath + '.state.json'
 	const state = await loadState(statePath, config.id)
-	const collector = new Collector({
-		config,
-		signal: controller.signal,
-		twitch: new Twitch(config, controller.signal, log),
-		state,
-		save: value => saveState(statePath, value),
-		log
-	})
+	const collector = config.followDrops
+		? new FollowDrops(new Twitch(config, controller.signal, log))
+		: new Collector({
+				config,
+				signal: controller.signal,
+				twitch: new Twitch(config, controller.signal, log),
+				state,
+				save: value => saveState(statePath, value),
+				log
+			})
 
 	const stop = () => controller.abort(new Error('Shutdown requested'))
 	const onMessage = (message: unknown) => {
@@ -171,7 +190,7 @@ async function main() {
 
 				delay = Math.max(Math.min(10_000 * 2 ** Math.min(failures - 1, 5), 300_000), error.retryAfterMs || 0)
 
-				log.warn(`Could not update badge data | Retrying in ${duration(delay)}`)
+				log.warn(`Could not update reward data | Retrying in ${duration(delay)}`)
 				log.debug('[SYSTEM] Step failed | ' + error.message)
 			}
 

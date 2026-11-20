@@ -1,6 +1,15 @@
 import type { Campaign, Config, DropProgress, DropReference, GlobalBadge, RewardGroup, SelectedStream, Stream, Task } from './types.ts'
 
 interface GqlData {
+	FollowedChannels: {
+		user?: {
+			follows?: {
+				edges: { cursor: string; node: { id: string; login: string; stream?: { id: string } | null } }[]
+				pageInfo: { hasNextPage: boolean }
+			}
+		} | null
+	}
+	ClaimDropRewards: { claimDropRewards?: { status?: string } | null }
 	ViewerRewardDropInventory: { currentUser?: { id?: string; inventory?: { viewerRewardDropCampaignsInProgress?: Campaign[] | null } } | null }
 	DropChannelCampaignsProgress: { channelDropCampaignsProgress?: Campaign[] | null }
 	ProgressionTrackSelections: { trackSelections?: { track: string; lane: string | null }[] | null }
@@ -125,6 +134,35 @@ export function playlistSegments(text: string, base: string | URL) {
 }
 
 export class Twitch {
+	async followedLive() {
+		const channels = new Map<string, { id: string; login: string }>()
+		let after: string | null = null
+		const cursors = new Set<string>()
+		for (;;) {
+			const data: GqlData['FollowedChannels'] = await this.gql(
+				'FollowedChannels',
+				{ login: this.config.login, after },
+				`query FollowedChannels($login: String!, $after: Cursor) { user(login: $login) { follows(first: 100, after: $after) { edges { cursor node { id login stream { id } } } pageInfo { hasNextPage } } } }`
+			)
+			const follows = data.user?.follows
+			if (!follows || !Array.isArray(follows.edges)) throw new Error('Follows | Missing channel list')
+			for (const { node } of follows.edges) if (node.stream) channels.set(node.id, { id: node.id, login: node.login })
+			if (!follows.pageInfo.hasNextPage) return [...channels.values()]
+			after = follows.edges.at(-1)?.cursor ?? null
+			if (!after || cursors.has(after)) throw new Error('Follows | Invalid pagination')
+			cursors.add(after)
+		}
+	}
+
+	async claimDrop(instance: string) {
+		const data = await this.gql(
+			'ClaimDropRewards',
+			{ input: { dropInstanceID: instance } },
+			'mutation ClaimDropRewards($input: DropClaimInput!) { claimDropRewards(input: $input) { status } }'
+		)
+		if (!['ELIGIBLE_FOR_ALL', 'SUCCESS', 'DROP_INSTANCE_ALREADY_CLAIMED'].includes(data.claimDropRewards?.status ?? ''))
+			throw new Error('Drops | Claim not confirmed')
+	}
 	config: Config
 	signal: AbortSignal | undefined
 	playback: { id: string; url: string } | null
@@ -227,7 +265,7 @@ export class Twitch {
 		return new Set(badges.map(badge => badge.setID + ':' + badge.version))
 	}
 
-	async streams(task: Task) {
+	async streams(task: Pick<Task, 'channels' | 'categoryIds'>) {
 		const batches = (values: string[]) =>
 			values.length ? Array.from({ length: Math.ceil(values.length / 100) }, (_, index) => values.slice(index * 100, index * 100 + 100)) : [[]]
 		const result = new Map<string, Stream>()

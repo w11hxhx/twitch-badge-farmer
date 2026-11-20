@@ -1,3 +1,8 @@
+# Followed-channel Drops fork
+
+This fork adds opt-in followed-channel watch rewards and optional Telegram,
+Discord and HTTPS webhook notifications. See [configuration and behavior](FOLLOW-DROPS.ru.md).
+
 # Badge Farmer
 
 Collects global Twitch badges that are awarded for watching streams.

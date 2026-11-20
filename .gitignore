@@ -4,6 +4,9 @@ dist/
 docs/
 test/
 node_modules/
+.bun-cache/
+config.*.json
+!config.example.json
 
 config.json
 *.state.json

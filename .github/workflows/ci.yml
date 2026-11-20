@@ -54,6 +54,9 @@ jobs:
             - name: Check types and build
               run: bun run build
 
+            - name: Test followed Drops and notifications
+              run: bun test src
+
             - name: Check executable
               run: ./dist/${{ matrix.binary }} --help
 
