@@ -140,3 +140,34 @@ test('ineligible reward groups do not start viewing', async () => {
 	}
 	expect(await new FollowDrops(twitch).step()).toBe(60_000)
 })
+test('channel progress is read when the group is absent from inventory', async () => {
+	const twitch = new Twitch({ id: '1', login: 'test', client_id: 'client', token: 'token' })
+	twitch.followedLive = async () => [{ id: '2', login: 'channel' }]
+	twitch.inventory = async () => []
+	twitch.badges = async () => new Set()
+	twitch.streams = async () => [{ id: 'live', user_id: '2', user_login: 'channel', game_id: 'g', game_name: 'game', type: 'live' }]
+	twitch.gql = (async () => ({ channel: { viewerDropCampaigns: [] } })) as typeof twitch.gql
+	let reads = 0,
+		watches = 0
+	twitch.channelCampaigns = async () => {
+		reads++
+		return [
+			{
+				id: 'c',
+				rewardGroups: [
+					{
+						id: 'group',
+						progressCriteria: { requirementType: 'WATCH', requirements: { minutesWatched: 60 } },
+						self: { status: 'IN_PROGRESS', currentMinutesWatched: reads, grantCount: 0, hasPreconditionsMet: true }
+					}
+				]
+			}
+		]
+	}
+	twitch.watch = async () => {
+		watches++
+	}
+	expect(await new FollowDrops(twitch).step()).toBe(20_000)
+	expect(reads).toBe(2)
+	expect(watches).toBe(1)
+})
