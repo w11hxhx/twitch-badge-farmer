@@ -1,7 +1,10 @@
-# Дополнение этого форка
+# Форк с планировщиком дедлайнов — v1.3.0
 
-Поиск Drops у всех фолловов, равная очередь каналов и настраиваемые
-Telegram/Discord/HTTPS уведомления: [инструкция](FOLLOW-DROPS.ru.md).
+Дедлайны, прогнозы Lurkology, закреплённый приоритет, до двух проверяемых потоков, редактируемый Telegram-статус и Discord/HTTPS уведомления.
+
+[Русская инструкция](FOLLOW-DROPS.ru.md) · [English guide](FOLLOW-DROPS.md) · [Изменения RU/EN](RELEASE_NOTES.md)
+
+Ниже описан исходный режим глобальных значков (`followDrops: false`).
 
 # Badge Farmer
 
@@ -13,7 +16,7 @@ Telegram/Discord/HTTPS уведомления: [инструкция](FOLLOW-DRO
 
 ## Установка
 
-Скачай готовую к запуску версию со страницы [релизов](https://github.com/FrostyDeFreeze/twitch-badge-farmer/releases).
+Скачай готовую к запуску версию со страницы [релизов](https://github.com/w11hxhx/twitch-badge-farmer/releases).
 
 Открой последний релиз и скачай архив для своей системы из раздела **Assets**.
 

@@ -11,6 +11,8 @@ import { Notifications } from './notifications.ts'
 import { loadState, saveState } from './state.ts'
 import { createLogger, duration } from './logger.ts'
 import type { Task } from './types.ts'
+import { writeFile, rename, stat, chown } from 'node:fs/promises'
+import { version } from '../package.json'
 
 let log = createLogger()
 
@@ -24,6 +26,7 @@ function argumentsFor(args: string[]) {
 	let mode = 'start'
 	let debug = false
 	let json = false
+	let priorityValue = ''
 	let configPath = resolve('config.json')
 
 	for (let index = 0; index < args.length; index++) {
@@ -33,12 +36,26 @@ function argumentsFor(args: string[]) {
 		if (argument === '--config' && value && !value.startsWith('--')) {
 			configPath = resolve(value)
 			index++
+		} else if (argument === '--set-priority' && value && !value.startsWith('--') && mode === 'start') {
+			mode = 'set-priority'
+			priorityValue = value
+			index++
 		} else if (argument === '--debug') {
 			debug = true
 		} else if (argument === '--json') {
 			json = true
 		} else if (
-			['--help', '--list', '--gen-token', '--scan-follows', '--eligible-channels', '--channels', '--test-notifications'].includes(argument) &&
+			[
+				'--help',
+				'--version',
+				'--list',
+				'--gen-token',
+				'--scan-follows',
+				'--eligible-channels',
+				'--channels',
+				'--plan',
+				'--test-notifications'
+			].includes(argument) &&
 			mode === 'start'
 		) {
 			mode = argument.slice(2)
@@ -47,15 +64,19 @@ function argumentsFor(args: string[]) {
 		}
 	}
 
-	if (json && !['channels', 'eligible-channels', 'scan-follows'].includes(mode))
+	if (json && !['channels', 'eligible-channels', 'scan-follows', 'plan'].includes(mode))
 		throw new Error('--json requires --channels or --eligible-channels')
-	return { mode, configPath, debug, json }
+	return { mode, configPath, debug, json, priorityValue }
 }
 
 async function main() {
-	const { mode, configPath, debug, json } = argumentsFor(process.argv.slice(2))
+	const { mode, configPath, debug, json, priorityValue } = argumentsFor(process.argv.slice(2))
 
 	log = createLogger({ debug })
+	if (mode === 'version') {
+		console.log(version)
+		return
+	}
 
 	if (mode === 'help') {
 		const section = (title: string, rows: [string, string][]) => [title, ...rows.map(([name, text]) => '  ' + name.padEnd(24) + text)]
@@ -70,6 +91,8 @@ async function main() {
 					['--scan-follows', 'Read-only scan for rewards on followed live channels'],
 					['--eligible-channels', 'List eligible rewards, channels, progress and UTC dates'],
 					['--channels', 'List ALL followed channels, including offline'],
+					['--plan', 'Show deadline plan, priority, history estimates and risks'],
+					['--set-priority <value>', 'Save priority name/ID, or none; reloads within 3 min'],
 					['--test-notifications', 'Send a test to configured notification destinations'],
 					['--gen-token', 'Sign in to Twitch and save the config']
 				]),
@@ -105,6 +128,21 @@ async function main() {
 	}
 
 	const config = validateConfig(await readConfig(configPath))
+	if (mode === 'set-priority') {
+		const record = (await readConfig(configPath)) as Record<string, unknown>
+		const scheduler = { ...config.scheduler }
+		if (priorityValue.toLowerCase() === 'none') delete scheduler.priorityReward
+		else scheduler.priorityReward = priorityValue
+		record.scheduler = scheduler
+		validateConfig(record)
+		const temporary = configPath + '.' + process.pid + '.tmp'
+		const owner = await stat(configPath)
+		await writeFile(temporary, JSON.stringify(record, null, 2) + '\n', { mode: 0o600 })
+		if (process.platform !== 'win32') await chown(temporary, owner.uid, owner.gid)
+		await rename(temporary, configPath)
+		console.log('Priority saved | ' + (scheduler.priorityReward ?? 'none') + ' | Reload within 3 min')
+		return
+	}
 
 	log = createLogger({ debug, token: config.token })
 	if (mode === 'test-notifications') {
@@ -123,13 +161,29 @@ async function main() {
 		}
 		return
 	}
-	if (mode === 'scan-follows' || mode === 'eligible-channels') {
+	if (mode === 'scan-follows' || mode === 'eligible-channels' || mode === 'plan') {
 		const safe = { ...config }
 		delete safe.notifications
 		const listLog = json ? createLogger({ silent: true, token: config.token }) : log
-		const follow = new FollowDrops(new Twitch(safe, controller.signal, listLog))
+		const follow = new FollowDrops(new Twitch(safe, controller.signal, listLog), undefined, configPath, true)
 		await follow.scan()
 		const rows = follow.rows()
+		if (mode === 'plan') {
+			const plan = follow.plan()
+			if (json)
+				console.log(
+					JSON.stringify(
+						{ rewards: plan.rows, warnings: [...follow.scanWarnings, ...plan.warnings], assumedSlots: plan.assumedSlots },
+						null,
+						2
+					)
+				)
+			else {
+				console.table(plan.rows)
+				for (const warning of plan.warnings) log.warn(warning)
+			}
+			return
+		}
 		if (json) console.log(JSON.stringify({ rewards: rows, warnings: follow.scanWarnings }, null, 2))
 		else console.table(rows.map(row => ({ ...row, channels: row.channels.join(', ') })))
 		return
@@ -173,7 +227,7 @@ async function main() {
 	const statePath = configPath + '.state.json'
 	const state = await loadState(statePath, config.id)
 	const collector = config.followDrops
-		? new FollowDrops(new Twitch(config, controller.signal, log), configPath + '.notifications.state.json')
+		? new FollowDrops(new Twitch(config, controller.signal, log), configPath + '.notifications.state.json', configPath)
 		: new Collector({
 				config,
 				signal: controller.signal,

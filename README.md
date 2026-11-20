@@ -1,7 +1,10 @@
-# Followed-channel Drops fork
+# Deadline planner fork — v1.3.0
 
-This fork adds opt-in followed-channel watch rewards and optional Telegram,
-Discord and HTTPS webhook notifications. See [configuration and behavior](FOLLOW-DROPS.ru.md).
+Deadline scheduling, Lurkology estimates, pinned reward priority, up to two verified playback sessions, editable Telegram progress and optional Discord/HTTPS notifications.
+
+[English guide](FOLLOW-DROPS.md) · [Русская инструкция](FOLLOW-DROPS.ru.md) · [RU/EN release notes](RELEASE_NOTES.md)
+
+The original global-badge mode (`followDrops: false`) is documented below.
 
 # Badge Farmer
 
@@ -13,7 +16,7 @@ The program uses Twitch's internal API and the TV app client. Twitch does not of
 
 ## Installation
 
-Download a ready-to-run version from [Releases](https://github.com/FrostyDeFreeze/twitch-badge-farmer/releases).
+Download a ready-to-run version from [Releases](https://github.com/w11hxhx/twitch-badge-farmer/releases).
 
 Open the latest release and download the archive for your system from **Assets**.
 

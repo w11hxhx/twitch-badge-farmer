@@ -38,6 +38,18 @@ export function validateConfig(input: unknown): Config {
 	config.token = config.token.replace(/^oauth:/i, '').trim()
 	if (record.followDrops !== undefined && typeof record.followDrops !== 'boolean') throw new Error('Config | followDrops must be boolean')
 	config.followDrops = record.followDrops === true
+	if (record.scheduler !== undefined) {
+		if (!record.scheduler || typeof record.scheduler !== 'object') throw new Error('Config | Invalid scheduler')
+		const scheduler = record.scheduler as Record<string, unknown>
+		if (scheduler.priorityReward !== undefined && (typeof scheduler.priorityReward !== 'string' || !scheduler.priorityReward.trim()))
+			throw new Error('Config | priorityReward must be a nonempty name or reward ID')
+		if (scheduler.maxConcurrentStreams !== undefined && scheduler.maxConcurrentStreams !== 1 && scheduler.maxConcurrentStreams !== 2)
+			throw new Error('Config | maxConcurrentStreams must be 1 or 2')
+		if (scheduler.historyEnabled !== undefined && typeof scheduler.historyEnabled !== 'boolean')
+			throw new Error('Config | historyEnabled must be boolean')
+		config.scheduler = { maxConcurrentStreams: scheduler.maxConcurrentStreams === 1 ? 1 : 2, historyEnabled: scheduler.historyEnabled !== false }
+		if (typeof scheduler.priorityReward === 'string') config.scheduler.priorityReward = scheduler.priorityReward.trim()
+	}
 	if (record.notifications !== undefined) {
 		const n = record.notifications as NonNullable<Config['notifications']>
 		if (!n || typeof n !== 'object') throw new Error('Config | Invalid notifications')

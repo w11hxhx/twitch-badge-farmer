@@ -4,6 +4,7 @@ export interface Config {
 	client_id: string
 	token: string
 	followDrops?: boolean
+	scheduler?: import('./scheduler.ts').SchedulerSettings
 	notifications?: { telegram?: { token: string; chatId: string }; discord?: { webhook: string }; webhook?: { url: string } }
 }
 
@@ -113,6 +114,7 @@ export interface DropProgress extends DropSelf {
 }
 
 export interface Stream {
+	started_at?: string
 	id: string
 	user_id: string
 	user_login: string

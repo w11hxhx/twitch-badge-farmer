@@ -54,6 +54,11 @@ jobs:
         permissions:
             contents: write
         steps:
+            - name: Checkout release notes
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+              with:
+                  persist-credentials: false
+
             - name: Download builds
               uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
               with:
@@ -81,10 +86,10 @@ jobs:
                   if draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
                     if [ "$draft" != true ]; then
                       echo "Release $RELEASE_TAG is already published"
-                      exit 1
+                      exit 0
                     fi
                   else
-                    gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
+                    gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG — Deadline planner / Планировщик дедлайнов" --notes-file RELEASE_NOTES.md
                   fi
                   gh release upload "$RELEASE_TAG" release/* --clobber
                   gh release edit "$RELEASE_TAG" --draft=false --latest

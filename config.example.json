@@ -2,5 +2,7 @@
 	"id": "your_twitch_id",
 	"login": "your_twitch_login",
 	"client_id": "ue6666qo983tsx6so1t0vnawi233wa",
-	"token": "your_oauth_token"
+	"token": "your_oauth_token",
+	"followDrops": true,
+	"scheduler": { "maxConcurrentStreams": 2, "historyEnabled": true }
 }

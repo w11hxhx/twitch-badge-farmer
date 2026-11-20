@@ -1,6 +1,10 @@
 import type { Campaign, Drop, SelectedStream } from './types.ts'
 import type { Twitch } from './twitch.ts'
 import { Notifications } from './notifications.ts'
+import { Histories } from './history.ts'
+import { isPriority, planSchedule, rewardKey } from './scheduler.ts'
+import { readConfig, validateConfig } from './config.ts'
+import { readFile, writeFile, rename } from 'node:fs/promises'
 
 export function eligibleDrop(campaign: Campaign, drop: Drop, now = Date.now()) {
 	return (
@@ -16,7 +20,7 @@ export function eligibleDrop(campaign: Campaign, drop: Drop, now = Date.now()) {
 	)
 }
 
-interface Candidate {
+export interface Candidate {
 	stream: SelectedStream
 	title: string
 	minutes: number
@@ -24,6 +28,8 @@ interface Candidate {
 	end: number
 	start: number
 	claimed: boolean
+	live?: boolean
+	badgeIds?: string[]
 	instance?: string | null | undefined
 }
 
@@ -105,31 +111,47 @@ export function fairChoice<T extends { stream: { user_login: string } }>(items: 
 export class FollowDrops {
 	scanWarnings: string[] = []
 	private candidates: Candidate[] = []
-	private active: Candidate | undefined
+	private sessions = new Map<
+		string,
+		{ item: Candidate; playback: Twitch['playback']; lastProgress: number; nextProgress: number; advancedAt: number; startedAt: number }
+	>()
+	private known = new Map<string, Candidate>()
+	private completed = new Map<string, Candidate>()
+	private loaded = false
+	private nextPlan = 0
+	private parallelBlockedUntil = 0
+	private verifiedSlots = 1
+	private histories: Histories
 	private nextScan = 0
-	private nextProgress = 0
-	private lastProgress = Date.now()
-	private previous = ''
-	private selectedAt = 0
 	private cooldown = new Map<string, number>()
 	private notifications: Notifications
 	constructor(
 		private twitch: Twitch,
-		notificationStatePath?: string
+		notificationStatePath?: string,
+		private configPath?: string,
+		readOnly = false
 	) {
 		this.notifications = new Notifications(twitch.config.notifications, fetch, notificationStatePath)
+		this.histories = new Histories(configPath ? configPath + '.history.state.json' : undefined, fetch, readOnly)
 	}
 	rows() {
 		return rewardRows(this.candidates)
 	}
 	async updateProgress(item: Candidate, status?: string) {
-		for (const error of await this.notifications.send('progress', progressMessage(item, status))) this.twitch.log.warn('Notifications | ' + error)
+		const parts = [...this.sessions.values()]
+			.filter(session => rewardKey(session.item) !== rewardKey(item))
+			.map(session => progressMessage(session.item))
+		parts.unshift(progressMessage(item, status))
+		for (const error of await this.notifications.send('progress', '[' + this.twitch.config.login + ']\n' + parts.join('\n\n')))
+			this.twitch.log.warn('Notifications | ' + error)
 	}
 	async notify(event: string, message: string) {
 		this.twitch.log.info(message)
 		for (const error of await this.notifications.send(event, message)) this.twitch.log.warn('Notifications | ' + error)
 	}
 	async scan() {
+		await this.loadKnown()
+		if (this.configPath) this.twitch.config.scheduler = validateConfig(await readConfig(this.configPath)).scheduler ?? {}
 		this.scanWarnings = []
 		const live = await this.twitch.followedLive()
 		const inventory = await this.twitch.inventory()
@@ -138,8 +160,16 @@ export class FollowDrops {
 		const excluded = new Set<string>()
 		let pulse = Date.now()
 		for (const channel of live) {
-			if (this.active && Date.now() - pulse >= 20_000) {
-				await this.twitch.watch(this.active.stream)
+			if (this.sessions.size && Date.now() - pulse >= 20_000) {
+				for (const session of [...this.sessions.values()]) {
+					try {
+						await this.watchSession(session)
+					} catch (error) {
+						if (error instanceof Error && (error.fatal || this.twitch.signal?.aborted)) throw error
+						this.sessions.delete(session.item.stream.user_id)
+						this.cooldown.set(session.item.stream.user_id, Date.now() + 180000)
+					}
+				}
 				pulse = Date.now()
 			}
 			try {
@@ -165,6 +195,7 @@ export class FollowDrops {
 							end: Math.min(Date.parse(drop.endAt), campaign.endAt ? Date.parse(campaign.endAt) : Infinity),
 							start: Math.max(Date.parse(drop.startAt), campaign.startAt ? Date.parse(campaign.startAt) : -Infinity),
 							claimed: false,
+							live: true,
 							instance: drop.self?.dropInstanceID
 						})
 					}
@@ -216,7 +247,9 @@ export class FollowDrops {
 							watched: self?.currentMinutesWatched ?? 0,
 							end: campaign.endAt ? Date.parse(campaign.endAt) : Infinity,
 							start: campaign.startAt ? Date.parse(campaign.startAt) : NaN,
-							claimed: false
+							claimed: false,
+							live: true,
+							badgeIds: badges
 						})
 					}
 				}
@@ -236,113 +269,241 @@ export class FollowDrops {
 				await this.notify('available', 'Watch reward available | ' + item.stream.user_login + ' | ' + item.title)
 			seen.add(item.stream.drop.id)
 		}
-		if (this.active) {
-			const reference = this.active.stream.drop
+		for (const session of this.sessions.values()) {
+			const reference = session.item.stream.drop
 			const campaign = inventory.find(c => c.id === reference.campaignId)
 			const claimed =
 				reference.kind === 'reward-group'
 					? ['CLAIMED', 'FULFILLED'].includes(campaign?.rewardGroups?.find(g => g.id === reference.id)?.self?.status ?? '')
 					: campaign?.timeBasedDrops?.find(d => d.id === reference.id)?.self?.isClaimed
 			if (claimed) {
-				await this.updateProgress(this.active, 'Награда получена')
-				await this.notify('earned', 'Reward confirmed | ' + this.active.stream.user_login + ' | ' + this.active.title)
-				this.active = undefined
+				await this.earned(session.item)
 			}
 		}
 		this.candidates = merged
+		for (const item of this.known.values()) item.live = false
+		for (const key of excluded) this.known.delete(key)
+		for (const item of merged) this.known.set(item.stream.user_id + ':' + rewardKey(item), item)
+		for (const [key, item] of this.known) if (item.end <= Date.now() || this.completed.has(rewardKey(item))) this.known.delete(key)
+		await this.histories.refresh(
+			[...new Set([...this.known.values()].map(item => item.stream.user_login))],
+			this.twitch.config.scheduler?.historyEnabled ?? !!this.configPath
+		)
+		this.nextPlan = 0
 		this.nextScan = Date.now() + 180_000
 		this.twitch.log.info(
 			`Follow Drops | ${live.length} live followed channels | ${new Set(merged.map(c => c.stream.user_id)).size} eligible channels | ${this.rows().length} unique rewards | ${merged.length} channel/reward pairs`
 		)
 	}
-	async persist() {} // Twitch inventory is the source of progress; no credentials or inferred rewards in state.
+	private async loadKnown() {
+		if (this.loaded) return
+		if (this.configPath) {
+			try {
+				const saved = JSON.parse(await readFile(this.configPath + '.planner.state.json', 'utf8')) as {
+					account: string
+					known: Candidate[]
+					completed: Candidate[]
+				}
+				if (saved.account === this.twitch.config.id) {
+					for (const item of saved.known ?? [])
+						if (item.stream?.user_id && item.stream?.drop?.id && Number.isFinite(item.end) && item.end > Date.now() && item.minutes > 0)
+							this.known.set(item.stream.user_id + ':' + rewardKey(item), { ...item, live: false })
+					for (const item of saved.completed ?? []) if (item.stream?.drop?.id) this.completed.set(rewardKey(item), item)
+				}
+			} catch (error) {
+				if (!(error instanceof Error) || error.code !== 'ENOENT') throw new Error('Planner | Could not read state')
+			}
+		}
+		await this.histories.load()
+		this.loaded = true
+	}
+	plan(now = Date.now()) {
+		const settings = { ...this.twitch.config.scheduler }
+		if (now < this.parallelBlockedUntil) settings.maxConcurrentStreams = 1
+		return planSchedule(
+			[...this.known.values()].map(item => ({ ...item, live: item.live !== false && (this.cooldown.get(item.stream.user_id) ?? 0) <= now })),
+			login => this.histories.get(login, now),
+			settings,
+			now,
+			this.verifiedSlots
+		)
+	}
+	private async atomic(path: string, value: unknown) {
+		const temporary = path + '.' + process.pid + '.tmp'
+		await writeFile(temporary, JSON.stringify(value), { mode: 0o600 })
+		await rename(temporary, path)
+	}
+	async persist() {
+		if (!this.configPath) return
+		await this.atomic(this.configPath + '.planner.state.json', {
+			account: this.twitch.config.id,
+			known: [...this.known.values()].filter(item => Number.isFinite(item.end)),
+			completed: [...this.completed.values()].slice(-50)
+		})
+		const plan = this.plan()
+		await this.atomic(this.configPath + '.status.json', {
+			account: this.twitch.config.login,
+			updatedAt: new Date().toISOString(),
+			activeChannels: [...this.sessions.values()].map(s => s.item.stream.user_login),
+			rewards: plan.rows,
+			completed: [...this.completed.values()].map(item => ({
+				reward: item.title,
+				channel: item.stream.user_login,
+				watchedMinutes: item.minutes,
+				requiredMinutes: item.minutes
+			})),
+			warnings: plan.warnings,
+			assumedSlots: plan.assumedSlots
+		})
+	}
 	interrupt() {
+		for (const session of this.sessions.values()) session.playback = null
 		this.twitch.playback = null
-		this.active = undefined
-		this.nextScan = 0
+		this.nextPlan = 0
+	}
+	private async watchSession(session: { item: Candidate; playback: Twitch['playback'] }) {
+		const saved = this.twitch.playback
+		this.twitch.playback = session.playback
+		try {
+			await this.twitch.watch(session.item.stream)
+		} finally {
+			session.playback = this.twitch.playback
+			this.twitch.playback = saved
+		}
+	}
+	private async earned(item: Candidate) {
+		this.completed.set(rewardKey(item), { ...item, claimed: true })
+		await this.updateProgress(item, 'Награда получена')
+		await this.notify('earned', 'Reward confirmed | ' + item.stream.user_login + ' | ' + item.title)
+		for (const [key, candidate] of this.known) if (rewardKey(candidate) === rewardKey(item)) this.known.delete(key)
+		this.sessions.delete(item.stream.user_id)
+		this.nextPlan = 0
 	}
 	async step() {
 		if (Date.now() >= this.nextScan) await this.scan()
-		if (this.active && Date.now() - this.selectedAt >= 1_800_000) {
-			this.active = undefined
-			this.twitch.playback = null
-		}
-		if (this.active && !this.candidates.some(c => c.stream.id === this.active!.stream.id && c.stream.drop.id === this.active!.stream.drop.id))
-			this.active = undefined
-		if (!this.active) {
-			this.active = fairChoice(
-				this.candidates.filter(c => c.end > Date.now() && (this.cooldown.get(c.stream.user_id) ?? 0) <= Date.now()),
-				this.previous
-			)
-			if (!this.active) return 60_000
-			this.previous = this.active.stream.user_login
-			this.selectedAt = Date.now()
-			this.lastProgress = Date.now()
-			this.nextProgress = 0
-			await this.notify('watching', 'Watching | ' + this.previous + ' | ' + this.active.title)
-			await this.updateProgress(this.active)
-		}
-		const active = this.active
-		if (Date.now() >= this.nextProgress) {
-			const inventory = await this.twitch.inventory()
-			const reference = active.stream.drop
-			let group =
-				reference.kind === 'reward-group'
-					? inventory.find(c => c.id === reference.campaignId)?.rewardGroups?.find(g => g.id === reference.id)
-					: undefined
-			if (reference.kind === 'reward-group' && !group) {
-				this.twitch.channelRewards.delete(active.stream.user_id)
-				group = (await this.twitch.channelCampaigns(active.stream.user_id))
-					?.find(c => c.id === reference.campaignId)
-					?.rewardGroups?.find(g => g.id === reference.id)
-			}
-			const progress =
-				reference.kind === 'reward-group'
-					? group?.self
-						? {
-								currentMinutesWatched: group.self.currentMinutesWatched ?? 0,
-								requiredMinutesWatched: group.progressCriteria?.requirements?.minutesWatched ?? active.minutes,
-								isClaimed: ['CLAIMED', 'FULFILLED'].includes(group.self.status),
-								dropInstanceID: null
-							}
-						: null
-					: await this.twitch.dropProgress(reference, '', inventory)
-			this.nextProgress = Date.now() + 60_000
-			if (progress) {
-				if (progress.currentMinutesWatched > active.watched) this.lastProgress = Date.now()
-				active.watched = progress.currentMinutesWatched
-				active.minutes = progress.requiredMinutesWatched
-				await this.updateProgress(active, progress.isClaimed ? 'Награда получена' : 'Просмотр')
-				this.twitch.log.info(`Progress | ${this.previous} | ${active.watched}/${progress.requiredMinutesWatched} min`)
-				if (progress.isClaimed) {
-					await this.notify('earned', 'Reward confirmed | ' + this.previous + ' | ' + active.title)
-					this.candidates = this.candidates.filter(c => c.stream.drop.id !== active.stream.drop.id)
-					this.active = undefined
-					return 0
+		if (Date.now() >= this.nextPlan) {
+			const plan = this.plan()
+			const selected = new Set(plan.selected.map(item => item.stream.user_id))
+			for (const id of this.sessions.keys()) if (!selected.has(id)) this.sessions.delete(id)
+			for (const item of plan.selected) {
+				const previous = this.sessions.get(item.stream.user_id)
+				if (previous && rewardKey(previous.item) === rewardKey(item)) {
+					if (item.watched > previous.item.watched) {
+						previous.lastProgress = Date.now()
+						previous.advancedAt = Date.now()
+					}
+					previous.item = item
+					continue
 				}
-				if (active.watched >= progress.requiredMinutesWatched && active.stream.drop.kind !== 'reward-group' && progress.dropInstanceID) {
-					await this.twitch.claimDrop(progress.dropInstanceID)
-					await this.updateProgress(active, 'Запрошено получение, ожидаю подтверждения Twitch')
-					await this.notify('claim', 'Reward claim submitted; awaiting inventory confirmation | ' + active.title)
-					return 20_000
+				this.sessions.set(item.stream.user_id, {
+					item,
+					playback: null,
+					lastProgress: Date.now(),
+					nextProgress: 0,
+					advancedAt: 0,
+					startedAt: Date.now()
+				})
+				this.verifiedSlots = 1
+				await this.notify(
+					'watching',
+					'Watching | ' +
+						item.stream.user_login +
+						' | ' +
+						item.title +
+						(isPriority(item, this.twitch.config.scheduler?.priorityReward) ? ' | PRIORITY' : ' | deadline plan')
+				)
+				await this.updateProgress(item)
+			}
+			this.nextPlan = Date.now() + 60000
+		}
+		if (!this.sessions.size) {
+			await this.persist()
+			return 60000
+		}
+		const due = [...this.sessions.values()].filter(session => Date.now() >= session.nextProgress)
+		const inventory = due.length ? await this.twitch.inventory() : []
+		for (const session of [...this.sessions.values()]) {
+			const item = session.item
+			if (!this.sessions.has(item.stream.user_id)) continue
+			if (Date.now() >= session.nextProgress) {
+				const reference = item.stream.drop
+				let group =
+					reference.kind === 'reward-group'
+						? inventory.find(c => c.id === reference.campaignId)?.rewardGroups?.find(g => g.id === reference.id)
+						: undefined
+				if (reference.kind === 'reward-group' && !group) {
+					this.twitch.channelRewards.delete(item.stream.user_id)
+					group = (await this.twitch.channelCampaigns(item.stream.user_id))
+						?.find(c => c.id === reference.campaignId)
+						?.rewardGroups?.find(g => g.id === reference.id)
+				}
+				const progress =
+					reference.kind === 'reward-group'
+						? group?.self
+							? {
+									currentMinutesWatched: group.self.currentMinutesWatched ?? 0,
+									requiredMinutesWatched: group.progressCriteria?.requirements?.minutesWatched ?? item.minutes,
+									isClaimed: ['CLAIMED', 'FULFILLED'].includes(group.self.status),
+									dropInstanceID: null
+								}
+							: null
+						: await this.twitch.dropProgress(reference, '', inventory)
+				session.nextProgress = Date.now() + 60000
+				if (progress) {
+					if (progress.currentMinutesWatched > item.watched) {
+						session.lastProgress = Date.now()
+						session.advancedAt = Date.now()
+					}
+					item.watched = progress.currentMinutesWatched
+					item.minutes = progress.requiredMinutesWatched
+					this.known.set(item.stream.user_id + ':' + rewardKey(item), item)
+					this.twitch.log.info(`Progress | ${item.stream.user_login} | ${item.watched}/${item.minutes} min`)
+					await this.updateProgress(item, progress.isClaimed ? 'Награда получена' : 'Просмотр')
+					if (progress.isClaimed) {
+						await this.earned(item)
+						continue
+					}
+					if (item.watched >= item.minutes && reference.kind !== 'reward-group' && progress.dropInstanceID) {
+						await this.twitch.claimDrop(progress.dropInstanceID)
+						await this.updateProgress(item, 'Запрошено получение, ожидаю подтверждения Twitch')
+						await this.persist()
+						return 20000
+					}
 				}
 			}
+			const parallel = this.sessions.size > 1
+			if (parallel && isPriority(item, this.twitch.config.scheduler?.priorityReward) && Date.now() - session.lastProgress >= 180000) {
+				this.parallelBlockedUntil = Date.now() + 1800000
+				this.verifiedSlots = 1
+				session.lastProgress = Date.now()
+				for (const id of this.sessions.keys()) if (id !== item.stream.user_id) this.sessions.delete(id)
+				this.nextPlan = 0
+				await this.notify('parallel-blocked', 'Priority progress stalled; secondary stream suspended for 30 min')
+			}
+			if (Date.now() - session.lastProgress >= 300000) {
+				this.cooldown.set(item.stream.user_id, Date.now() + 300000)
+				this.sessions.delete(item.stream.user_id)
+				this.nextPlan = 0
+				if (parallel) {
+					this.parallelBlockedUntil = Date.now() + 1800000
+					this.verifiedSlots = 1
+				}
+				await this.updateProgress(item, 'Нет прогресса 5 минут — перепланирование')
+				continue
+			}
+			try {
+				await this.watchSession(session)
+			} catch (error) {
+				if (error instanceof Error && (error.fatal || this.twitch.signal?.aborted)) throw error
+				this.cooldown.set(item.stream.user_id, Date.now() + 180000)
+				this.sessions.delete(item.stream.user_id)
+				this.nextPlan = 0
+				this.twitch.log.warn('Playback unavailable | ' + item.stream.user_login)
+			}
 		}
-		if (Date.now() - this.lastProgress >= 300_000) {
-			await this.updateProgress(active, 'Прогресс остановился — переключаю канал')
-			await this.notify('stalled', 'No confirmed progress for 5 min | ' + this.previous + ' | Switching channel')
-			this.cooldown.set(active.stream.user_id, Date.now() + 300_000)
-			this.active = undefined
-			this.twitch.playback = null
-			return 0
-		}
-		try {
-			await this.twitch.watch(active.stream)
-		} catch (error) {
-			this.cooldown.set(active.stream.user_id, Date.now() + 180_000)
-			this.active = undefined
-			throw error
-		}
-		return 20_000
+		const parallelStart = Math.max(...[...this.sessions.values()].map(session => session.startedAt))
+		if (this.sessions.size === 2 && [...this.sessions.values()].every(session => session.advancedAt > parallelStart)) this.verifiedSlots = 2
+		await this.persist()
+		return 20000
 	}
 }
