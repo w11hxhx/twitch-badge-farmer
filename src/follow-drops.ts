@@ -22,8 +22,73 @@ interface Candidate {
 	minutes: number
 	watched: number
 	end: number
+	start: number
 	claimed: boolean
 	instance?: string | null | undefined
+}
+
+export function mergeCandidates(items: Candidate[]) {
+	const result = new Map<string, Candidate>()
+	for (const item of items) {
+		const ref = item.stream.drop
+		const key = [item.stream.user_id, ref.campaignId, ref.id].join(':')
+		const previous = result.get(key)
+		if (!previous) {
+			result.set(key, item)
+			continue
+		}
+		const preferred = ref.kind === 'reward-group' ? item : previous
+		const advertised = ref.kind === 'reward-group' ? previous : item
+		result.set(key, {
+			...preferred,
+			title: advertised.title,
+			start: Number.isFinite(preferred.start) ? preferred.start : advertised.start,
+			end: Math.min(item.end, previous.end)
+		})
+	}
+	return [...result.values()]
+}
+
+export function rewardRows(items: Candidate[]) {
+	const grouped = new Map<
+		string,
+		{
+			reward: string
+			type: string
+			channels: string[]
+			watchedMinutes: number
+			requiredMinutes: number
+			openedUTC: string | null
+			closesUTC: string | null
+		}
+	>()
+	for (const item of mergeCandidates(items)) {
+		const ref = item.stream.drop
+		const key = [ref.campaignId, ref.id].join(':')
+		let row = grouped.get(key)
+		if (!row) {
+			row = {
+				reward: item.title,
+				type: ref.kind === 'reward-group' ? 'WATCH reward group' : 'Drop',
+				channels: [],
+				watchedMinutes: item.watched,
+				requiredMinutes: item.minutes,
+				openedUTC: Number.isFinite(item.start) ? new Date(item.start).toISOString() : null,
+				closesUTC: Number.isFinite(item.end) ? new Date(item.end).toISOString() : null
+			}
+			grouped.set(key, row)
+		}
+		if (!row.channels.includes(item.stream.user_login)) row.channels.push(item.stream.user_login)
+		row.watchedMinutes = Math.max(row.watchedMinutes, item.watched)
+	}
+	return [...grouped.values()].map(row => ({ ...row, channels: row.channels.sort() }))
+}
+
+export function progressMessage(item: Candidate, status = 'Просмотр') {
+	const percent = Math.min(100, Math.floor((item.watched / item.minutes) * 100))
+	const date = (value: number) =>
+		Number.isFinite(value) ? new Date(value).toISOString().replace('T', ' ').replace('.000Z', ' UTC') : 'Twitch не указал'
+	return `${status}\n${item.title}\nhttps://www.twitch.tv/${item.stream.user_login}\nПрогресс: ${item.watched}/${item.minutes} мин (${percent}%)\nОсталось смотреть: ${Math.max(0, item.minutes - item.watched)} мин\nОткрылась: ${date(item.start)}\nЗакроется: ${date(item.end)}`
 }
 
 // Stable round-robin by channel: no special treatment for pwgood or viewer count.
@@ -33,6 +98,7 @@ export function fairChoice<T extends { stream: { user_login: string } }>(items: 
 }
 
 export class FollowDrops {
+	scanWarnings: string[] = []
 	private candidates: Candidate[] = []
 	private active: Candidate | undefined
 	private nextScan = 0
@@ -42,14 +108,24 @@ export class FollowDrops {
 	private selectedAt = 0
 	private cooldown = new Map<string, number>()
 	private notifications: Notifications
-	constructor(private twitch: Twitch) {
-		this.notifications = new Notifications(twitch.config.notifications)
+	constructor(
+		private twitch: Twitch,
+		notificationStatePath?: string
+	) {
+		this.notifications = new Notifications(twitch.config.notifications, fetch, notificationStatePath)
+	}
+	rows() {
+		return rewardRows(this.candidates)
+	}
+	async updateProgress(item: Candidate, status?: string) {
+		for (const error of await this.notifications.send('progress', progressMessage(item, status))) this.twitch.log.warn('Notifications | ' + error)
 	}
 	async notify(event: string, message: string) {
 		this.twitch.log.info(message)
 		for (const error of await this.notifications.send(event, message)) this.twitch.log.warn('Notifications | ' + error)
 	}
 	async scan() {
+		this.scanWarnings = []
 		const live = await this.twitch.followedLive()
 		const inventory = await this.twitch.inventory()
 		const owned = await this.twitch.badges()
@@ -80,7 +156,8 @@ export class FollowDrops {
 									.join(', ') || drop.id,
 							minutes: drop.requiredMinutesWatched,
 							watched: drop.self?.currentMinutesWatched ?? 0,
-							end: Date.parse(drop.endAt),
+							end: Math.min(Date.parse(drop.endAt), campaign.endAt ? Date.parse(campaign.endAt) : Infinity),
+							start: Math.max(Date.parse(drop.startAt), campaign.startAt ? Date.parse(campaign.startAt) : -Infinity),
 							claimed: false,
 							instance: drop.self?.dropInstanceID
 						})
@@ -118,10 +195,15 @@ export class FollowDrops {
 							continue
 						candidates.push({
 							stream: { ...stream, drop: { id: group.id, campaignId: campaign.id, kind: 'reward-group' } },
-							title: group.id,
+							title: campaign.name
+								? campaign.name + ' / WATCH'
+								: badges.length
+									? badges.map(badge => badge.replace(/:\d+$/, '')).join(', ')
+									: 'WATCH reward ' + group.id,
 							minutes: req.minutesWatched,
 							watched: self?.currentMinutesWatched ?? 0,
 							end: campaign.endAt ? Date.parse(campaign.endAt) : Infinity,
+							start: campaign.startAt ? Date.parse(campaign.startAt) : NaN,
 							claimed: false
 						})
 					}
@@ -129,11 +211,13 @@ export class FollowDrops {
 			} catch (error) {
 				if (error instanceof Error && error.fatal) throw error
 				this.twitch.log.warn('Drops scan unavailable | ' + channel.login)
+				this.scanWarnings.push('Drops scan unavailable | ' + channel.login)
 				if (error instanceof Error) this.twitch.log.debug(error.message)
 			}
 		}
+		const merged = mergeCandidates(candidates)
 		const seen = new Set(this.candidates.map(c => c.stream.drop.id))
-		for (const item of candidates) {
+		for (const item of merged) {
 			if (!seen.has(item.stream.drop.id))
 				await this.notify('available', 'Watch reward available | ' + item.stream.user_login + ' | ' + item.title)
 			seen.add(item.stream.drop.id)
@@ -146,13 +230,16 @@ export class FollowDrops {
 					? ['CLAIMED', 'FULFILLED'].includes(campaign?.rewardGroups?.find(g => g.id === reference.id)?.self?.status ?? '')
 					: campaign?.timeBasedDrops?.find(d => d.id === reference.id)?.self?.isClaimed
 			if (claimed) {
+				await this.updateProgress(this.active, 'Награда получена')
 				await this.notify('earned', 'Reward confirmed | ' + this.active.stream.user_login + ' | ' + this.active.title)
 				this.active = undefined
 			}
 		}
-		this.candidates = candidates
+		this.candidates = merged
 		this.nextScan = Date.now() + 180_000
-		this.twitch.log.info(`Follow Drops | ${live.length} live followed channels | ${candidates.length} eligible rewards`)
+		this.twitch.log.info(
+			`Follow Drops | ${live.length} live followed channels | ${new Set(merged.map(c => c.stream.user_id)).size} eligible channels | ${this.rows().length} unique rewards | ${merged.length} channel/reward pairs`
+		)
 	}
 	async persist() {} // Twitch inventory is the source of progress; no credentials or inferred rewards in state.
 	interrupt() {
@@ -179,6 +266,7 @@ export class FollowDrops {
 			this.lastProgress = Date.now()
 			this.nextProgress = 0
 			await this.notify('watching', 'Watching | ' + this.previous + ' | ' + this.active.title)
+			await this.updateProgress(this.active)
 		}
 		const active = this.active
 		if (Date.now() >= this.nextProgress) {
@@ -209,6 +297,8 @@ export class FollowDrops {
 			if (progress) {
 				if (progress.currentMinutesWatched > active.watched) this.lastProgress = Date.now()
 				active.watched = progress.currentMinutesWatched
+				active.minutes = progress.requiredMinutesWatched
+				await this.updateProgress(active, progress.isClaimed ? 'Награда получена' : 'Просмотр')
 				this.twitch.log.info(`Progress | ${this.previous} | ${active.watched}/${progress.requiredMinutesWatched} min`)
 				if (progress.isClaimed) {
 					await this.notify('earned', 'Reward confirmed | ' + this.previous + ' | ' + active.title)
@@ -218,12 +308,14 @@ export class FollowDrops {
 				}
 				if (active.watched >= progress.requiredMinutesWatched && active.stream.drop.kind !== 'reward-group' && progress.dropInstanceID) {
 					await this.twitch.claimDrop(progress.dropInstanceID)
+					await this.updateProgress(active, 'Запрошено получение, ожидаю подтверждения Twitch')
 					await this.notify('claim', 'Reward claim submitted; awaiting inventory confirmation | ' + active.title)
 					return 20_000
 				}
 			}
 		}
 		if (Date.now() - this.lastProgress >= 300_000) {
+			await this.updateProgress(active, 'Прогресс остановился — переключаю канал')
 			await this.notify('stalled', 'No confirmed progress for 5 min | ' + this.previous + ' | Switching channel')
 			this.cooldown.set(active.stream.user_id, Date.now() + 300_000)
 			this.active = undefined

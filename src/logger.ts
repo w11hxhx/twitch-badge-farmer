@@ -21,9 +21,9 @@ export function clock(time: number) {
 	return pad(date.getHours()) + ':' + pad(date.getMinutes())
 }
 
-export function createLogger({ debug = false, token = '' }: { debug?: boolean; token?: string } = {}) {
+export function createLogger({ debug = false, token = '', silent = false }: { debug?: boolean; token?: string; silent?: boolean } = {}) {
 	return createConsola({
-		level: debug ? 4 : 3,
+		level: silent ? -999 : debug ? 4 : 3,
 		// collector messages are already deduplicated, write immediately before exit
 		throttle: 0,
 		reporters: [

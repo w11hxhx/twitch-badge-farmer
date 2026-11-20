@@ -134,8 +134,8 @@ export function playlistSegments(text: string, base: string | URL) {
 }
 
 export class Twitch {
-	async followedLive() {
-		const channels = new Map<string, { id: string; login: string }>()
+	async followedChannels() {
+		const channels = new Map<string, { id: string; login: string; live: boolean }>()
 		let after: string | null = null
 		const cursors = new Set<string>()
 		for (;;) {
@@ -146,12 +146,15 @@ export class Twitch {
 			)
 			const follows = data.user?.follows
 			if (!follows || !Array.isArray(follows.edges)) throw new Error('Follows | Missing channel list')
-			for (const { node } of follows.edges) if (node.stream) channels.set(node.id, { id: node.id, login: node.login })
+			for (const { node } of follows.edges) channels.set(node.id, { id: node.id, login: node.login, live: !!node.stream })
 			if (!follows.pageInfo.hasNextPage) return [...channels.values()]
 			after = follows.edges.at(-1)?.cursor ?? null
 			if (!after || cursors.has(after)) throw new Error('Follows | Invalid pagination')
 			cursors.add(after)
 		}
+	}
+	async followedLive() {
+		return (await this.followedChannels()).filter(channel => channel.live).map(({ id, login }) => ({ id, login }))
 	}
 
 	async claimDrop(instance: string) {
@@ -367,7 +370,7 @@ export class Twitch {
 			'DropChannelCampaignsProgress',
 			{ channelID },
 			`query DropChannelCampaignsProgress($channelID: ID!) {
-      channelDropCampaignsProgress(channelID: $channelID) { id startAt endAt rewardGroups { ${REWARD_FIELDS} } }
+      channelDropCampaignsProgress(channelID: $channelID) { id name startAt endAt rewardGroups { ${REWARD_FIELDS} } }
      }`
 		)
 

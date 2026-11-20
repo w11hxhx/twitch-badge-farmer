@@ -64,6 +64,7 @@ export interface Drop {
 
 export interface Campaign {
 	id: string
+	name?: string
 	startAt?: string
 	endAt?: string
 	game?: { id: string } | null

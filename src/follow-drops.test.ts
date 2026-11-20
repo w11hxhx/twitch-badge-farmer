@@ -1,10 +1,13 @@
 import { test, expect } from 'bun:test'
-import { fairChoice, eligibleDrop } from './follow-drops.ts'
+import { fairChoice, eligibleDrop, rewardRows, progressMessage, mergeCandidates } from './follow-drops.ts'
 import { FollowDrops } from './follow-drops.ts'
 import { validateConfig } from './config.ts'
 import { Notifications } from './notifications.ts'
 import { Twitch } from './twitch.ts'
 import type { Drop } from './types.ts'
+import { mkdtemp, readFile, unlink, rmdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('round robin treats every channel equally and wraps', () => {
 	const items = ['pwgood', 'aaa', 'zzz'].map(user_login => ({ stream: { user_login } }))
@@ -74,6 +77,22 @@ test('follows pagination includes live channels from later pages', async () => {
 		}
 	})) as typeof twitch.gql
 	expect(await twitch.followedLive()).toEqual([{ id: '2', login: 'ch2' }])
+})
+test('all followed channels include offline entries across pages', async () => {
+	const twitch = new Twitch({ id: '1', login: 'test', client_id: 'client', token: 'token' })
+	let calls = 0
+	twitch.gql = (async () => ({
+		user: {
+			follows: {
+				edges: [{ cursor: String(++calls), node: { id: String(calls), login: 'ch' + calls, stream: calls === 2 ? { id: 'live' } : null } }],
+				pageInfo: { hasNextPage: calls < 2 }
+			}
+		}
+	})) as typeof twitch.gql
+	expect(await twitch.followedChannels()).toEqual([
+		{ id: '1', login: 'ch1', live: false },
+		{ id: '2', login: 'ch2', live: true }
+	])
 })
 test('legacy config remains valid when follow mode is disabled', () => {
 	expect(validateConfig({ id: '1', login: 'TEST', client_id: 'client', token: 'oauth:secret' })).toMatchObject({
@@ -170,4 +189,112 @@ test('channel progress is read when the group is absent from inventory', async (
 	expect(await new FollowDrops(twitch).step()).toBe(20_000)
 	expect(reads).toBe(2)
 	expect(watches).toBe(1)
+})
+test('reward listing groups duplicate channel/reward pairs and preserves UTC dates', () => {
+	const item = {
+		stream: { id: 's', user_id: '1', user_login: 'aaa', game_id: 'g', game_name: 'game', type: 'live', drop: { id: 'd', campaignId: 'c' } },
+		title: 'PepeLand 11 START',
+		minutes: 660,
+		watched: 60,
+		start: 1000,
+		end: 2000,
+		claimed: false
+	}
+	const rows = rewardRows([item, { ...item, stream: { ...item.stream, user_id: '2', user_login: 'bbb' } }])
+	expect(rows).toHaveLength(1)
+	expect(rows[0]?.channels).toEqual(['aaa', 'bbb'])
+	expect(rows[0]?.openedUTC).toBe(new Date(1000).toISOString())
+	expect(rows[0]?.closesUTC).toBe(new Date(2000).toISOString())
+	expect(progressMessage(item)).toContain('60/660')
+	expect(progressMessage({ ...item, start: NaN, end: Infinity })).toContain('Twitch не указал')
+})
+test('the two Twitch representations of a reward use one row and authoritative progress', () => {
+	const item = {
+		stream: { id: 's', user_id: '1', user_login: 'pwgood', game_id: 'g', game_name: 'game', type: 'live', drop: { id: 'd', campaignId: 'c' } },
+		title: 'PepeLand 11 START',
+		minutes: 660,
+		watched: 0,
+		start: 1000,
+		end: 2000,
+		claimed: false
+	}
+	const group = {
+		...item,
+		stream: { ...item.stream, drop: { ...item.stream.drop, kind: 'reward-group' as const } },
+		title: 'internal-badge-id',
+		watched: 426
+	}
+	for (const items of [
+		[item, group],
+		[group, item]
+	]) {
+		const merged = mergeCandidates(items)
+		expect(merged).toHaveLength(1)
+		expect(merged[0]?.title).toBe('PepeLand 11 START')
+		expect(merged[0]?.watched).toBe(426)
+		expect(merged[0]?.stream.drop.kind).toBe('reward-group')
+		expect(rewardRows(items)).toHaveLength(1)
+	}
+	expect(mergeCandidates([item, { ...group, stream: { ...group.stream, drop: { ...group.stream.drop, campaignId: 'different' } } }])).toHaveLength(
+		2
+	)
+})
+test('Telegram sends once, then edits the same message and resumes after restart', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'farmer-telegram-'))
+	const path = join(directory, 'notification.state.json')
+	const calls: { url: string; body: Record<string, unknown> }[] = []
+	const request = (async (url: string | URL | Request, init?: RequestInit) => {
+		calls.push({ url: String(url), body: JSON.parse(String(init?.body)) })
+		return new Response('{"ok":true,"result":{"message_id":123}}')
+	}) as unknown as typeof fetch
+	try {
+		const config = { telegram: { token: '1:secret', chatId: '42' } }
+		const n = new Notifications(config, request, path)
+		expect(await n.send('progress', '1/10')).toEqual([])
+		expect(await n.send('progress', '2/10')).toEqual([])
+		await n.send('progress', '2/10')
+		expect(calls).toHaveLength(2)
+		expect(calls[0]?.url).toEndWith('/sendMessage')
+		expect(calls[1]?.url).toEndWith('/editMessageText')
+		expect(calls[1]?.body.message_id).toBe(123)
+		expect(await readFile(path, 'utf8')).not.toContain('secret')
+		await new Notifications(config, request, path).send('progress', '3/10')
+		expect(calls[2]?.url).toEndWith('/editMessageText')
+		expect(calls[2]?.body.message_id).toBe(123)
+	} finally {
+		await unlink(path)
+		await rmdir(directory)
+	}
+})
+test('Telegram recreates a deleted progress message but not on permission errors', async () => {
+	const calls: string[] = []
+	let failure = 'Bad Request: message to edit not found'
+	const request = (async (url: string | URL | Request) => {
+		calls.push(String(url))
+		return String(url).endsWith('/sendMessage')
+			? new Response('{"ok":true,"result":{"message_id":123}}')
+			: new Response(JSON.stringify({ ok: false, description: failure }), { status: 400 })
+	}) as unknown as typeof fetch
+	const n = new Notifications({ telegram: { token: '1:token', chatId: '1' } }, request)
+	await n.send('progress', 'first')
+	expect(await n.send('progress', 'second')).toEqual([])
+	expect(calls).toHaveLength(3)
+	failure = 'Forbidden'
+	expect(await n.send('progress', 'third')).toHaveLength(1)
+	expect(calls).toHaveLength(4)
+})
+test('Telegram accepts unchanged text errors and respects retry_after', async () => {
+	let calls = 0
+	let response = new Response('{"ok":true,"result":{"message_id":123}}')
+	const n = new Notifications({ telegram: { token: '1:token', chatId: '1' } }, (async () => {
+		calls++
+		return response.clone()
+	}) as unknown as typeof fetch)
+	await n.send('progress', 'first')
+	response = new Response('{"ok":false,"description":"Bad Request: message is not modified"}', { status: 400 })
+	expect(await n.send('progress', 'second')).toEqual([])
+	response = new Response('{"ok":false,"parameters":{"retry_after":60}}', { status: 429 })
+	expect(await n.send('progress', 'third')).toHaveLength(1)
+	await n.send('progress', 'fourth')
+	expect(calls).toBe(3)
 })

@@ -23,6 +23,7 @@ function nextWindow(task: Task, now: number) {
 function argumentsFor(args: string[]) {
 	let mode = 'start'
 	let debug = false
+	let json = false
 	let configPath = resolve('config.json')
 
 	for (let index = 0; index < args.length; index++) {
@@ -34,18 +35,25 @@ function argumentsFor(args: string[]) {
 			index++
 		} else if (argument === '--debug') {
 			debug = true
-		} else if (['--help', '--list', '--gen-token', '--scan-follows', '--test-notifications'].includes(argument) && mode === 'start') {
+		} else if (argument === '--json') {
+			json = true
+		} else if (
+			['--help', '--list', '--gen-token', '--scan-follows', '--eligible-channels', '--channels', '--test-notifications'].includes(argument) &&
+			mode === 'start'
+		) {
 			mode = argument.slice(2)
 		} else {
 			throw new Error('Unknown argument or conflicting modes | Use --help')
 		}
 	}
 
-	return { mode, configPath, debug }
+	if (json && !['channels', 'eligible-channels', 'scan-follows'].includes(mode))
+		throw new Error('--json requires --channels or --eligible-channels')
+	return { mode, configPath, debug, json }
 }
 
 async function main() {
-	const { mode, configPath, debug } = argumentsFor(process.argv.slice(2))
+	const { mode, configPath, debug, json } = argumentsFor(process.argv.slice(2))
 
 	log = createLogger({ debug })
 
@@ -60,6 +68,8 @@ async function main() {
 					['(none)', 'Collect badges until stopped with Ctrl+C'],
 					['--list', 'Show available badges without watching'],
 					['--scan-follows', 'Read-only scan for rewards on followed live channels'],
+					['--eligible-channels', 'List eligible rewards, channels, progress and UTC dates'],
+					['--channels', 'List ALL followed channels, including offline'],
 					['--test-notifications', 'Send a test to configured notification destinations'],
 					['--gen-token', 'Sign in to Twitch and save the config']
 				]),
@@ -67,6 +77,7 @@ async function main() {
 				...section('Options:', [
 					['--config <file>', 'Use another config file (default: config.json)'],
 					['--debug', 'Show technical details and skipped badges'],
+					['--json', 'Machine-readable output for channel/reward lists'],
 					['--help', 'Show this help']
 				])
 			].join('\n')
@@ -103,10 +114,24 @@ async function main() {
 		log.success('Notification test delivered')
 		return
 	}
-	if (mode === 'scan-follows') {
+	if (mode === 'channels') {
+		const channels = (await new Twitch(config, controller.signal, log).followedChannels()).sort((a, b) => a.login.localeCompare(b.login))
+		if (json) console.log(JSON.stringify(channels, null, 2))
+		else {
+			console.table(channels.map(c => ({ channel: c.login, status: c.live ? 'LIVE' : 'OFFLINE', url: 'https://www.twitch.tv/' + c.login })))
+			log.info(`${channels.length} followed channels | ${channels.filter(c => c.live).length} live`)
+		}
+		return
+	}
+	if (mode === 'scan-follows' || mode === 'eligible-channels') {
 		const safe = { ...config }
 		delete safe.notifications
-		await new FollowDrops(new Twitch(safe, controller.signal, log)).scan()
+		const listLog = json ? createLogger({ silent: true, token: config.token }) : log
+		const follow = new FollowDrops(new Twitch(safe, controller.signal, listLog))
+		await follow.scan()
+		const rows = follow.rows()
+		if (json) console.log(JSON.stringify({ rewards: rows, warnings: follow.scanWarnings }, null, 2))
+		else console.table(rows.map(row => ({ ...row, channels: row.channels.join(', ') })))
 		return
 	}
 
@@ -148,7 +173,7 @@ async function main() {
 	const statePath = configPath + '.state.json'
 	const state = await loadState(statePath, config.id)
 	const collector = config.followDrops
-		? new FollowDrops(new Twitch(config, controller.signal, log))
+		? new FollowDrops(new Twitch(config, controller.signal, log), configPath + '.notifications.state.json')
 		: new Collector({
 				config,
 				signal: controller.signal,
