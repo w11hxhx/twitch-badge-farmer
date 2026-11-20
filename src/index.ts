@@ -58,7 +58,7 @@ async function main() {
 	log = createLogger({ debug })
 
 	if (mode === 'help') {
-		const section = (title: string, rows: [string, string][]) => [title, ...rows.map(([name, text]) => '  ' + name.padEnd(18) + text)]
+		const section = (title: string, rows: [string, string][]) => [title, ...rows.map(([name, text]) => '  ' + name.padEnd(24) + text)]
 
 		console.log(
 			[

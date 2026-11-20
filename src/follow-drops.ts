@@ -130,6 +130,7 @@ export class FollowDrops {
 		const inventory = await this.twitch.inventory()
 		const owned = await this.twitch.badges()
 		const candidates: Candidate[] = []
+		const excluded = new Set<string>()
 		let pulse = Date.now()
 		for (const channel of live) {
 			if (this.active && Date.now() - pulse >= 20_000) {
@@ -179,7 +180,11 @@ export class FollowDrops {
 								const badge = r.dropDetail?.badge
 								return badge?.setID && badge.version != null ? [badge.setID + ':' + badge.version] : []
 							})
-						if (badges.length && badges.every(badge => owned.has(badge))) continue
+						const identity = [channel.id, campaign.id, group.id].join(':')
+						if (badges.length && badges.every(badge => owned.has(badge))) {
+							excluded.add(identity)
+							continue
+						}
 						if (
 							group.progressCriteria?.requirementType !== 'WATCH' ||
 							!req?.minutesWatched ||
@@ -191,8 +196,10 @@ export class FollowDrops {
 							self?.hasPreconditionsMet !== true ||
 							['CLAIMED', 'FULFILLED'].includes(self?.status ?? '') ||
 							(self?.nextEligibleAt && Date.parse(self.nextEligibleAt) > Date.now())
-						)
+						) {
+							excluded.add(identity)
 							continue
+						}
 						candidates.push({
 							stream: { ...stream, drop: { id: group.id, campaignId: campaign.id, kind: 'reward-group' } },
 							title: campaign.name
@@ -215,7 +222,9 @@ export class FollowDrops {
 				if (error instanceof Error) this.twitch.log.debug(error.message)
 			}
 		}
-		const merged = mergeCandidates(candidates)
+		const merged = mergeCandidates(candidates).filter(
+			item => !excluded.has([item.stream.user_id, item.stream.drop.campaignId, item.stream.drop.id].join(':'))
+		)
 		const seen = new Set(this.candidates.map(c => c.stream.drop.id))
 		for (const item of merged) {
 			if (!seen.has(item.stream.drop.id))

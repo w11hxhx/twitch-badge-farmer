@@ -147,7 +147,23 @@ test('ineligible reward groups do not start viewing', async () => {
 	twitch.inventory = async () => []
 	twitch.badges = async () => new Set()
 	twitch.streams = async () => [{ id: 'live', user_id: '2', user_login: 'channel', game_id: 'g', game_name: 'game', type: 'live' }]
-	twitch.gql = (async () => ({ channel: { viewerDropCampaigns: [] } })) as typeof twitch.gql
+	twitch.gql = (async () => ({
+		channel: {
+			viewerDropCampaigns: [
+				{
+					id: 'c',
+					timeBasedDrops: [
+						{
+							id: 'unavailable',
+							requiredMinutesWatched: 60,
+							startAt: new Date(0).toISOString(),
+							endAt: new Date(Date.now() + 3600000).toISOString()
+						}
+					]
+				}
+			]
+		}
+	})) as typeof twitch.gql
 	twitch.channelCampaigns = async () => [
 		{
 			id: 'c',
