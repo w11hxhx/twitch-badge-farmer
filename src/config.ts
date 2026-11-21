@@ -37,7 +37,7 @@ export function validateConfig(input: unknown): Config {
 	config.login = config.login.toLowerCase()
 	config.token = config.token.replace(/^oauth:/i, '').trim()
 	if (record.followDrops !== undefined && typeof record.followDrops !== 'boolean') throw new Error('Config | followDrops must be boolean')
-	config.followDrops = record.followDrops === true
+	config.followDrops = record.followDrops !== false
 	if (record.channels !== undefined) {
 		const value = record.channels as Config['channels']
 		if (

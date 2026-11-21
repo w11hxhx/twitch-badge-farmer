@@ -5,34 +5,6 @@ import { join } from 'node:path'
 import { TelegramControl, channelLogin } from './telegram-control.ts'
 import { validateConfig } from './config.ts'
 
-test('shared bot routing survives restart and an expired callback acknowledgement', async () => {
-	const dir = await mkdtemp(join(tmpdir(), 'badge-shared-control-'))
-	try {
-		const path = join(dir, 'config.json'),
-			state = join(dir, 'state.json')
-		await writeFile(path, JSON.stringify({ id: '1', login: 'owner', client_id: 'client', token: 'token' }))
-		const methods: string[] = []
-		const request = (async (url: any) => {
-			methods.push(String(url))
-			if (String(url).endsWith('answerCallbackQuery')) return Response.json({ ok: false, description: 'query is too old' }, { status: 400 })
-			return Response.json({ ok: true, result: { message_id: 55 } })
-		}) as typeof fetch
-		const first = new TelegramControl('token', [{ path, chatId: '100' }], state, request)
-		await first.accept({
-			update_id: 1,
-			callback_query: { id: 'old', data: 'bf:remove', from: { id: 100 }, message: { message_id: 7, chat: { id: 100, type: 'private' } } }
-		})
-		const resumed = new TelegramControl('token', [{ path, chatId: '100' }], state, request)
-		await resumed.accept({ update_id: 2, message: { text: 'pwgood', from: { id: 100 }, chat: { id: 100, type: 'private' } } })
-		expect(JSON.parse(await readFile(path, 'utf8')).channels.excluded).toEqual(['pwgood'])
-		expect(methods.filter(m => m.endsWith('/sendMessage'))).toHaveLength(1)
-		expect(methods.filter(m => m.endsWith('/editMessageText'))).toHaveLength(1)
-		expect(methods.some(m => m.endsWith('/getUpdates'))).toBe(false)
-	} finally {
-		await rm(dir, { recursive: true, force: true })
-	}
-})
-
 test('Telegram controls isolate accounts, persist edits and ignore unauthorized users', async () => {
 	const dir = await mkdtemp(join(tmpdir(), 'badge-control-'))
 	try {
@@ -45,7 +17,7 @@ test('Telegram controls isolate accounts, persist edits and ignore unauthorized 
 		const request = (async (url: any, options: any) => {
 			const body = options?.body ? JSON.parse(options.body) : {}
 			calls.push({ url: String(url), body })
-			if (String(url).includes('helix/users')) return Response.json({ data: [{ id: '42', login: 'pwgood' }] })
+			if (String(url).includes('helix/users')) return Response.json({ data: [{ id: '42', login: 'examplechannel' }] })
 			return Response.json({ ok: true, result: { message_id: 101 } })
 		}) as typeof fetch
 		const changes: string[] = []
@@ -65,19 +37,19 @@ test('Telegram controls isolate accounts, persist edits and ignore unauthorized 
 			update_id: 1,
 			message: { text, chat: { id: chat, type: 'private' }, from: { id: sender } }
 		})
-		await bot.handle(message('/remove pwgood', 100, 999))
+		await bot.handle(message('/remove examplechannel', 100, 999))
 		expect(calls).toHaveLength(0)
-		await bot.handle(message('/remove pwgood'))
-		expect(JSON.parse(await readFile(a, 'utf8')).channels.excluded).toEqual(['pwgood'])
+		await bot.handle(message('/remove examplechannel'))
+		expect(JSON.parse(await readFile(a, 'utf8')).channels.excluded).toEqual(['examplechannel'])
 		expect(JSON.parse(await readFile(b, 'utf8')).channels).toBeUndefined()
-		await bot.handle(message('/add https://twitch.tv/PWGood'))
+		await bot.handle(message('/add https://twitch.tv/ExampleChannel'))
 		let config = JSON.parse(await readFile(a, 'utf8'))
-		expect(config.channels).toEqual({ added: [{ id: '42', login: 'pwgood' }], excluded: [] })
+		expect(config.channels).toEqual({ added: [{ id: '42', login: 'examplechannel' }], excluded: [] })
 		expect(config.custom).toEqual({ keep: true })
-		await bot.handle(message('/priority_badge PepeLand 11 START'))
-		await bot.handle(message('/priority_channel pwgood'))
+		await bot.handle(message('/priority_badge Example Badge'))
+		await bot.handle(message('/priority_channel examplechannel'))
 		config = validateConfig(JSON.parse(await readFile(a, 'utf8')))
-		expect(config.scheduler).toMatchObject({ priorityReward: 'PepeLand 11 START', priorityChannel: 'pwgood' })
+		expect(config.scheduler).toMatchObject({ priorityReward: 'Example Badge', priorityChannel: 'examplechannel' })
 		await bot.handle(message('/priority_badge none'))
 		await bot.handle(message('/priority_channel none'))
 		expect(JSON.parse(await readFile(a, 'utf8')).scheduler.priorityReward).toBeUndefined()
@@ -90,8 +62,8 @@ test('Telegram controls isolate accounts, persist edits and ignore unauthorized 
 })
 
 test('Telegram callback input expires and group controls are rejected', async () => {
-	expect(channelLogin('@PWGood')).toBe('pwgood')
-	expect(() => channelLogin('pwgood/../../etc')).toThrow()
+	expect(channelLogin('@ExampleChannel')).toBe('examplechannel')
+	expect(() => channelLogin('examplechannel/../../etc')).toThrow()
 	expect(() =>
 		validateConfig({
 			id: '1',
@@ -115,8 +87,8 @@ test('Telegram callback input expires and group controls are rejected', async ()
 			update_id: 1,
 			callback_query: { id: 'cb', data: 'bf:remove', from: { id: 100 }, message: { message_id: 9, chat: { id: 100, type: 'private' } } }
 		})
-		await bot.handle({ update_id: 2, message: { text: 'pwgood', from: { id: 100 }, chat: { id: 100, type: 'private' } } })
-		expect(JSON.parse(await readFile(path, 'utf8')).channels.excluded).toEqual(['pwgood'])
+		await bot.handle({ update_id: 2, message: { text: 'examplechannel', from: { id: 100 }, chat: { id: 100, type: 'private' } } })
+		expect(JSON.parse(await readFile(path, 'utf8')).channels.excluded).toEqual(['examplechannel'])
 		expect(calls[0].url).toContain('answerCallbackQuery')
 	} finally {
 		await rm(dir, { recursive: true, force: true })

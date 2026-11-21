@@ -35,7 +35,11 @@ function reward(login: string, remaining: number, deadlineMinutes: number, title
 }
 
 test('Lurkology aggregate converts 106 hours / 25 streams into 254.4 minutes', () => {
-	const value = parseHistory('<p>Over the last <b>30 days</b> PWGood streamed 106h across 25 streams, averaging 2,259 viewers.</p>', 'pwgood', now)
+	const value = parseHistory(
+		'<p>Over the last <b>30 days</b> ExampleChannel streamed 106h across 25 streams, averaging 2,259 viewers.</p>',
+		'examplechannel',
+		now
+	)
 	expect(value?.averageMinutes).toBeCloseTo(254.4)
 	expect(value?.streamsPerDay).toBeCloseTo(25 / 30)
 	expect(parseHistory('No recent streams', 'test')).toBeNull()
@@ -57,14 +61,9 @@ test('history failures use an explicitly unknown fallback; successful fetches ar
 	expect(unavailable.get('test').source).toBe('fallback')
 })
 test('pinned priority reserves a slot even when another reward expires sooner', () => {
-	const priority = reward('pwgood', 234, 2880, 'PepeLand 11 START')
-	const result = planSchedule(
-		[reward('other', 10, 20), priority],
-		() => stats,
-		{ priorityReward: 'PepeLand 11 START', maxConcurrentStreams: 1 },
-		now
-	)
-	expect(result.selected[0]?.stream.user_login).toBe('pwgood')
+	const priority = reward('examplechannel', 234, 2880, 'Example Badge')
+	const result = planSchedule([reward('other', 10, 20), priority], () => stats, { priorityReward: 'Example Badge', maxConcurrentStreams: 1 }, now)
+	expect(result.selected[0]?.stream.user_login).toBe('examplechannel')
 	expect(isPriority(priority, priority.stream.drop.id)).toBe(true)
 	expect(result.rows[0]?.priority).toBe(true)
 })
@@ -114,7 +113,7 @@ test('two playback sessions keep independent caches and require confirmed parall
 			login: 'test',
 			client_id: 'client',
 			token: 'token',
-			scheduler: { priorityReward: 'PepeLand 11 START', maxConcurrentStreams: 2, historyEnabled: false }
+			scheduler: { priorityReward: 'Example Badge', maxConcurrentStreams: 2, historyEnabled: false }
 		})
 		twitch.followedLive = async () => [
 			{ id: 'a', login: 'a' },
@@ -123,7 +122,7 @@ test('two playback sessions keep independent caches and require confirmed parall
 		twitch.badges = async () => new Set()
 		const campaign = (id: string) => ({
 			id,
-			name: id === 'a' ? 'PepeLand 11 START' : 'Other',
+			name: id === 'a' ? 'Example Badge' : 'Other',
 			rewardGroups: [
 				{
 					id,

@@ -61,7 +61,7 @@ jobs:
               if: matrix.cross
               run: bun run typecheck && bun build --compile --sourcemap src/index.ts --target=bun-darwin-arm64 --outfile dist/badge-farmer
 
-            - name: Test followed Drops and notifications
+            - name: Test badge collection and notifications
               run: bun test src
 
             - name: Check executable

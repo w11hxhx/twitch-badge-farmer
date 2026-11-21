@@ -88,10 +88,10 @@ async function main() {
 				...section('Modes:', [
 					['(none)', 'Collect badges until stopped with Ctrl+C'],
 					['--list', 'Show available badges without watching'],
-					['--scan-follows', 'Read-only scan for rewards on followed live channels'],
-					['--eligible-channels', 'List eligible rewards, channels, progress and UTC dates'],
+					['--scan-follows', 'Read-only scan for badges on followed live channels'],
+					['--eligible-channels', 'List eligible badges, channels, progress and UTC dates'],
 					['--channels', 'List ALL followed channels, including offline'],
-					['--plan', 'Show reward order, priority, stream estimates and progress'],
+					['--plan', 'Show badge order, priority, stream estimates and progress'],
 					['--set-priority <value>', 'Save priority name/ID, or none; reloads within 3 min'],
 					['--test-notifications', 'Send a test to configured notification destinations'],
 					['--gen-token', 'Sign in to Twitch and save the config']
@@ -161,7 +161,7 @@ async function main() {
 		}
 		return
 	}
-	if (mode === 'scan-follows' || mode === 'eligible-channels' || mode === 'plan') {
+	if (mode === 'scan-follows' || mode === 'eligible-channels' || mode === 'plan' || (mode === 'list' && config.followDrops)) {
 		const safe = { ...config }
 		delete safe.notifications
 		const listLog = json ? createLogger({ silent: true, token: config.token }) : log

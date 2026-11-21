@@ -1,10 +1,9 @@
 import { test, expect } from 'bun:test'
-import { fairChoice, eligibleDrop, rewardRows, progressMessage, mergeCandidates } from './follow-drops.ts'
+import { rewardRows, progressMessage, mergeCandidates } from './follow-drops.ts'
 import { FollowDrops } from './follow-drops.ts'
 import { validateConfig } from './config.ts'
 import { Notifications } from './notifications.ts'
 import { Twitch } from './twitch.ts'
-import type { Drop } from './types.ts'
 import { mkdtemp, readFile, unlink, rmdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -52,74 +51,6 @@ test('rescans discover and remove badge rewards, preserve failures and drop unfo
 	expect(farmer.plan().rows).toHaveLength(0)
 })
 
-test('suspending for streaks releases playback and resumes the saved badge progress', async () => {
-	const directory = await mkdtemp(join(tmpdir(), 'streak-pause-')),
-		path = join(directory, 'config.json')
-	const config = {
-		id: '1',
-		login: 'owner',
-		client_id: 'client',
-		token: 'token',
-		scheduler: { maxConcurrentStreams: 1 as const, historyEnabled: false }
-	}
-	await Bun.write(path, JSON.stringify(config))
-	try {
-		const twitch = new Twitch(config)
-		twitch.followedLive = async () => [{ id: '2', login: 'channel' }]
-		twitch.streams = async () => [{ id: 'live', user_id: '2', user_login: 'channel', game_id: 'g', game_name: 'game', type: 'live' }]
-		twitch.inventory = async () => []
-		twitch.badges = async () => new Set()
-		twitch.channelCampaigns = async () => [
-			{
-				id: 'campaign',
-				rewardGroups: [
-					{
-						id: 'group',
-						rewards: [{ dropDetail: { badge: { setID: 'badge', version: '1' } } }],
-						progressCriteria: { requirementType: 'WATCH', requirements: { minutesWatched: 60 } },
-						self: { status: 'IN_PROGRESS', currentMinutesWatched: 12, grantCount: 0, hasPreconditionsMet: true }
-					}
-				]
-			}
-		]
-		let watched = 0
-		twitch.watch = async () => {
-			watched++
-		}
-		const farmer = new FollowDrops(twitch, undefined, path)
-		await farmer.step()
-		expect(watched).toBe(1)
-		await farmer.suspend()
-		const paused = JSON.parse(await readFile(path + '.status.json', 'utf8'))
-		expect(paused.activeChannels).toEqual([])
-		expect(paused.rewards[0].watchedMinutes).toBe(12)
-		await farmer.step()
-		expect(watched).toBe(2)
-		expect(JSON.parse(await readFile(path + '.status.json', 'utf8')).activeChannels).toEqual(['channel'])
-	} finally {
-		const { rm } = await import('node:fs/promises')
-		await rm(directory, { recursive: true, force: true })
-	}
-})
-
-test('round robin treats every channel equally and wraps', () => {
-	const items = ['pwgood', 'aaa', 'zzz'].map(user_login => ({ stream: { user_login } }))
-	expect(fairChoice(items, '')?.stream.user_login).toBe('aaa')
-	expect(fairChoice(items, 'aaa')?.stream.user_login).toBe('pwgood')
-	expect(fairChoice(items, 'zzz')?.stream.user_login).toBe('aaa')
-	expect(fairChoice([], '')).toBeUndefined()
-})
-test('skips expired, paid, claimed and locked drops', () => {
-	const drop: Drop = { id: 'd', requiredMinutesWatched: 10, startAt: new Date(0).toISOString(), endAt: new Date(2000).toISOString() }
-	expect(eligibleDrop({ id: 'c' }, drop, 1000)).toBe(true)
-	for (const change of [
-		{ requiredSubs: 1 },
-		{ self: { currentMinutesWatched: 0, isClaimed: true } },
-		{ self: { currentMinutesWatched: 0, hasPreconditionsMet: false } },
-		{ endAt: new Date(500).toISOString() }
-	])
-		expect(eligibleDrop({ id: 'c' }, { ...drop, ...change }, 1000)).toBe(false)
-})
 test('notifications are disabled without settings', async () => {
 	const n = new Notifications(undefined, (() => {
 		throw new Error('must not send')
@@ -187,12 +118,13 @@ test('all followed channels include offline entries across pages', async () => {
 		{ id: '2', login: 'ch2', live: true }
 	])
 })
-test('legacy config remains valid when follow mode is disabled', () => {
+test('channel badge collection is the default and legacy badge mode remains explicit', () => {
 	expect(validateConfig({ id: '1', login: 'TEST', client_id: 'client', token: 'oauth:secret' })).toMatchObject({
 		login: 'test',
 		token: 'secret',
-		followDrops: false
+		followDrops: true
 	})
+	expect(validateConfig({ id: '1', login: 'test', client_id: 'client', token: 'secret', followDrops: false }).followDrops).toBe(false)
 	expect(() => validateConfig({ followDrops: 'true' })).toThrow()
 })
 test('HTTP and Telegram API failures are reported', async () => {
@@ -303,7 +235,7 @@ test('channel progress is read when the group is absent from inventory', async (
 test('reward listing groups duplicate channel/reward pairs and preserves UTC dates', () => {
 	const item = {
 		stream: { id: 's', user_id: '1', user_login: 'aaa', game_id: 'g', game_name: 'game', type: 'live', drop: { id: 'd', campaignId: 'c' } },
-		title: 'PepeLand 11 START',
+		title: 'Example Badge',
 		minutes: 660,
 		watched: 60,
 		start: 1000,
@@ -320,8 +252,16 @@ test('reward listing groups duplicate channel/reward pairs and preserves UTC dat
 })
 test('the two Twitch representations of a reward use one row and authoritative progress', () => {
 	const item = {
-		stream: { id: 's', user_id: '1', user_login: 'pwgood', game_id: 'g', game_name: 'game', type: 'live', drop: { id: 'd', campaignId: 'c' } },
-		title: 'PepeLand 11 START',
+		stream: {
+			id: 's',
+			user_id: '1',
+			user_login: 'examplechannel',
+			game_id: 'g',
+			game_name: 'game',
+			type: 'live',
+			drop: { id: 'd', campaignId: 'c' }
+		},
+		title: 'Example Badge',
 		minutes: 660,
 		watched: 0,
 		start: 1000,
@@ -340,7 +280,7 @@ test('the two Twitch representations of a reward use one row and authoritative p
 	]) {
 		const merged = mergeCandidates(items)
 		expect(merged).toHaveLength(1)
-		expect(merged[0]?.title).toBe('PepeLand 11 START')
+		expect(merged[0]?.title).toBe('Example Badge')
 		expect(merged[0]?.watched).toBe(426)
 		expect(merged[0]?.stream.drop.kind).toBe('reward-group')
 		expect(rewardRows(items)).toHaveLength(1)

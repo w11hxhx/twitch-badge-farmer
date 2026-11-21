@@ -258,17 +258,4 @@ export class TelegramControl {
 			this.nextPoll = Math.max(this.nextPoll, Date.now() + 15000)
 		}
 	}
-	// Shared bots can route updates from their existing consumer without a second getUpdates loop.
-	async accept(update: Update) {
-		if (!this.loaded) {
-			try {
-				this.state = JSON.parse(await readFile(this.statePath, 'utf8'))
-			} catch (error) {
-				if (!(error instanceof Error) || error.code !== 'ENOENT') throw new Error('Telegram control state unreadable')
-			}
-			this.loaded = true
-		}
-		await this.handle(update)
-		await atomic(this.statePath, this.state)
-	}
 }

@@ -1,19 +1,17 @@
-# Twitch Badge Farmer v1.4.2
+# Badge Farmer v1.5.0
 
 ## Русский
 
-- Компактное меню Telegram без служебных списков добавленных и исключённых каналов.
-
-- Просроченное подтверждение нажатия Telegram больше не мешает открыть меню или применить действие.
-- Добавлена обработка обновлений от единого получателя общего бота без запуска второго `getUpdates`.
-- Состояние меню и ожидаемый ввод сохраняются при такой передаче обновлений и восстанавливаются после перезапуска.
-- Фарм по-прежнему ограничен креаторскими бейджами каналов.
+- Сбор креаторских бейджей каналов за просмотр Twitch.
+- Поиск доступных бейджей у фолловов и обновление очереди каждые три минуты.
+- Приоритет бейджа или канала, проверка прогресса и до двух потоков.
+- Telegram-управление каналами для бейджей и уведомления Telegram, Discord и HTTPS.
+- Русская и английская инструкции по установке и использованию.
 
 ## English
 
-- Compact Telegram menus without administrative added/excluded channel lists.
-
-- An expired Telegram callback acknowledgement no longer prevents menus or actions from working.
-- Shared bots can forward updates from one existing consumer without starting a second `getUpdates` loop.
-- Forwarded-update menus and pending input persist across restarts.
-- Farming remains limited to creator channel badges.
+- Collects creator channel badges awarded for watching Twitch streams.
+- Discovers eligible badges on followed channels and refreshes the queue every three minutes.
+- Badge or channel priority, progress verification, and up to two streams.
+- Telegram badge-channel controls and Telegram, Discord, and HTTPS notifications.
+- English and Russian installation and usage instructions.

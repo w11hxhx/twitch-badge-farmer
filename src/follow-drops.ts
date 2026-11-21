@@ -1,4 +1,4 @@
-import type { Campaign, Drop, SelectedStream } from './types.ts'
+import type { SelectedStream } from './types.ts'
 import type { Twitch } from './twitch.ts'
 import { Notifications } from './notifications.ts'
 import { Histories } from './history.ts'
@@ -6,20 +6,6 @@ import { isPriority, planSchedule, rewardKey } from './scheduler.ts'
 import { readConfig, validateConfig } from './config.ts'
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { TelegramControl } from './telegram-control.ts'
-
-export function eligibleDrop(campaign: Campaign, drop: Drop, now = Date.now()) {
-	return (
-		(!campaign.startAt || Date.parse(campaign.startAt) <= now) &&
-		(!campaign.endAt || Date.parse(campaign.endAt) > now) &&
-		Date.parse(drop.startAt) <= now &&
-		Date.parse(drop.endAt) > now &&
-		drop.requiredMinutesWatched > 0 &&
-		!drop.requiredSubs &&
-		!drop.requiredTurboSubs &&
-		drop.self?.hasPreconditionsMet !== false &&
-		!drop.self?.isClaimed
-	)
-}
 
 export interface Candidate {
 	stream: SelectedStream
@@ -31,7 +17,6 @@ export interface Candidate {
 	claimed: boolean
 	live?: boolean
 	badgeIds?: string[]
-	instance?: string | null | undefined
 }
 
 export function mergeCandidates(items: Candidate[]) {
@@ -81,7 +66,7 @@ export function rewardRows(items: Candidate[]) {
 		if (!row) {
 			row = {
 				reward: item.title,
-				type: ref.kind === 'reward-group' ? 'WATCH reward group' : 'Drop',
+				type: 'Channel badge',
 				channels: [],
 				watchedMinutes: item.watched,
 				requiredMinutes: item.minutes,
@@ -101,12 +86,6 @@ export function progressMessage(item: Candidate, status = 'Просмотр') {
 	const date = (value: number) =>
 		Number.isFinite(value) ? new Date(value).toISOString().replace('T', ' ').replace('.000Z', ' UTC') : 'Twitch не указал'
 	return `${status}\n${item.title}\nhttps://www.twitch.tv/${item.stream.user_login}\nПрогресс: ${item.watched}/${item.minutes} мин (${percent}%)\nОсталось смотреть: ${Math.max(0, item.minutes - item.watched)} мин\nОткрылась: ${date(item.start)}\nЗакроется: ${date(item.end)}`
-}
-
-// Stable round-robin by channel: no special treatment for pwgood or viewer count.
-export function fairChoice<T extends { stream: { user_login: string } }>(items: T[], previous: string) {
-	const sorted = [...items].sort((a, b) => a.stream.user_login.localeCompare(b.stream.user_login))
-	return sorted.find(item => item.stream.user_login > previous) ?? sorted[0]
 }
 
 export class FollowDrops {
@@ -265,8 +244,8 @@ export class FollowDrops {
 				scanned.add(channel.id)
 			} catch (error) {
 				if (error instanceof Error && error.fatal) throw error
-				this.twitch.log.warn('Drops scan unavailable | ' + channel.login)
-				this.scanWarnings.push('Drops scan unavailable | ' + channel.login)
+				this.twitch.log.warn('Badge scan unavailable | ' + channel.login)
+				this.scanWarnings.push('Badge scan unavailable | ' + channel.login)
 				if (error instanceof Error) this.twitch.log.debug(error.message)
 			}
 		}
@@ -282,10 +261,7 @@ export class FollowDrops {
 		for (const session of this.sessions.values()) {
 			const reference = session.item.stream.drop
 			const campaign = inventory.find(c => c.id === reference.campaignId)
-			const claimed =
-				reference.kind === 'reward-group'
-					? ['CLAIMED', 'FULFILLED'].includes(campaign?.rewardGroups?.find(g => g.id === reference.id)?.self?.status ?? '')
-					: campaign?.timeBasedDrops?.find(d => d.id === reference.id)?.self?.isClaimed
+			const claimed = ['CLAIMED', 'FULFILLED'].includes(campaign?.rewardGroups?.find(g => g.id === reference.id)?.self?.status ?? '')
 			if (claimed) {
 				await this.earned(session.item)
 			}
@@ -304,7 +280,7 @@ export class FollowDrops {
 		this.nextPlan = 0
 		this.nextScan = Date.now() + 180_000
 		this.twitch.log.info(
-			`Follow Drops | ${live.length} live followed channels | ${new Set(merged.map(c => c.stream.user_id)).size} eligible channels | ${this.rows().length} unique rewards | ${merged.length} channel/reward pairs`
+			`Followed badges | ${live.length} live followed channels | ${new Set(merged.map(c => c.stream.user_id)).size} eligible channels | ${this.rows().length} unique rewards | ${merged.length} channel/reward pairs`
 		)
 	}
 	private async loadKnown() {
@@ -373,15 +349,6 @@ export class FollowDrops {
 		this.twitch.playback = null
 		this.nextPlan = 0
 	}
-	async suspend() {
-		this.sessions.clear()
-		this.twitch.playback = null
-		this.nextPlan = 0
-		await this.persist()
-	}
-	async refreshIfDue() {
-		if (Date.now() >= this.nextScan) await this.scan()
-	}
 	private async watchSession(session: { item: Candidate; playback: Twitch['playback'] }) {
 		const saved = this.twitch.playback
 		this.twitch.playback = session.playback
@@ -449,27 +416,20 @@ export class FollowDrops {
 			if (!this.sessions.has(item.stream.user_id)) continue
 			if (Date.now() >= session.nextProgress) {
 				const reference = item.stream.drop
-				let group =
-					reference.kind === 'reward-group'
-						? inventory.find(c => c.id === reference.campaignId)?.rewardGroups?.find(g => g.id === reference.id)
-						: undefined
-				if (reference.kind === 'reward-group' && !group) {
+				let group = inventory.find(c => c.id === reference.campaignId)?.rewardGroups?.find(g => g.id === reference.id)
+				if (!group) {
 					this.twitch.channelRewards.delete(item.stream.user_id)
 					group = (await this.twitch.channelCampaigns(item.stream.user_id))
 						?.find(c => c.id === reference.campaignId)
 						?.rewardGroups?.find(g => g.id === reference.id)
 				}
-				const progress =
-					reference.kind === 'reward-group'
-						? group?.self
-							? {
-									currentMinutesWatched: group.self.currentMinutesWatched ?? 0,
-									requiredMinutesWatched: group.progressCriteria?.requirements?.minutesWatched ?? item.minutes,
-									isClaimed: ['CLAIMED', 'FULFILLED'].includes(group.self.status),
-									dropInstanceID: null
-								}
-							: null
-						: await this.twitch.dropProgress(reference, '', inventory)
+				const progress = group?.self
+					? {
+							currentMinutesWatched: group.self.currentMinutesWatched ?? 0,
+							requiredMinutesWatched: group.progressCriteria?.requirements?.minutesWatched ?? item.minutes,
+							isClaimed: ['CLAIMED', 'FULFILLED'].includes(group.self.status)
+						}
+					: null
 				session.nextProgress = Date.now() + 60000
 				if (progress) {
 					if (progress.currentMinutesWatched > item.watched) {
@@ -488,12 +448,6 @@ export class FollowDrops {
 					if (item.watched >= item.minutes) {
 						this.sessions.delete(item.stream.user_id)
 						this.nextPlan = 0
-					}
-					if (item.watched >= item.minutes && reference.kind !== 'reward-group' && progress.dropInstanceID) {
-						await this.twitch.claimDrop(progress.dropInstanceID)
-						await this.updateProgress(item, 'Запрошено получение, ожидаю подтверждения Twitch')
-						await this.persist()
-						return 20000
 					}
 				}
 			}
