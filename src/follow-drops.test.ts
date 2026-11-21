@@ -111,7 +111,7 @@ test('HTTP and Telegram API failures are reported', async () => {
 		'telegram: rejected'
 	])
 })
-test('follow collector watches, claims with instance ID and waits for confirmation', async () => {
+test('ordinary game Drops never start playback or claims', async () => {
 	const twitch = new Twitch({ id: '1', login: 'test', client_id: 'client', token: 'token' })
 	const now = Date.now()
 	const drop = {
@@ -138,8 +138,8 @@ test('follow collector watches, claims with instance ID and waits for confirmati
 		throw new Error('already ready to claim')
 	}
 	const collector = new FollowDrops(twitch)
-	expect(await collector.step()).toBe(20_000)
-	expect(claims).toBe(1)
+	expect(await collector.step()).toBe(60_000)
+	expect(claims).toBe(0)
 })
 test('ineligible reward groups do not start viewing', async () => {
 	const twitch = new Twitch({ id: '1', login: 'test', client_id: 'client', token: 'token' })
@@ -192,6 +192,7 @@ test('channel progress is read when the group is absent from inventory', async (
 				rewardGroups: [
 					{
 						id: 'group',
+						rewards: [{ distributionType: 'BADGE', dropDetail: { badge: { setID: 'creator', version: '1' } } }],
 						progressCriteria: { requirementType: 'WATCH', requirements: { minutesWatched: 60 } },
 						self: { status: 'IN_PROGRESS', currentMinutesWatched: reads, grantCount: 0, hasPreconditionsMet: true }
 					}

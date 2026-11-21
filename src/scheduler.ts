@@ -101,6 +101,7 @@ export function planSchedule(
 	const slots = settings.maxConcurrentStreams ?? 2
 	for (const value of scored) {
 		if (
+			value.row.remainingMinutes === 0 ||
 			value.item.live === false ||
 			value.item.end <= now ||
 			selected.length >= slots ||

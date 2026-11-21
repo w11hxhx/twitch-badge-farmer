@@ -123,14 +123,13 @@ test('two playback sessions keep independent caches and require confirmed parall
 		twitch.badges = async () => new Set()
 		const campaign = (id: string) => ({
 			id,
-			timeBasedDrops: [
+			name: id === 'a' ? 'PepeLand 11 START' : 'Other',
+			rewardGroups: [
 				{
 					id,
-					startAt: new Date(now - 1000).toISOString(),
-					endAt: new Date(now + 86400000).toISOString(),
-					requiredMinutesWatched: 60,
-					benefitEdges: [{ benefit: { name: id === 'a' ? 'PepeLand 11 START' : 'Other' } }],
-					self: { currentMinutesWatched: watched[id]! }
+					progressCriteria: { requirementType: 'WATCH', requirements: { minutesWatched: 60 } },
+					rewards: [{ distributionType: 'BADGE', dropDetail: { badge: { setID: 'creator-' + id, version: '1' } } }],
+					self: { status: 'IN_PROGRESS', currentMinutesWatched: watched[id]!, grantCount: 0, hasPreconditionsMet: true }
 				}
 			]
 		})
@@ -148,7 +147,7 @@ test('two playback sessions keep independent caches and require confirmed parall
 		twitch.gql = (async (_operation: string, variables: { channelID: string }) => ({
 			channel: { viewerDropCampaigns: [campaign(variables.channelID)] }
 		})) as typeof twitch.gql
-		twitch.channelCampaigns = async () => []
+		twitch.channelCampaigns = async id => [campaign(id)]
 		const playback: (string | undefined)[] = []
 		twitch.watch = async stream => {
 			playback.push(twitch.playback?.id)
@@ -172,4 +171,13 @@ test('two playback sessions keep independent caches and require confirmed parall
 	} finally {
 		Date.now = original
 	}
+})
+
+test('completed watch requirement never consumes a slot while claim is pending', () => {
+	const done = reward('done', 180, 60)
+	done.watched = 180
+	const pending = reward('pending', 30, 60)
+	const plan = planSchedule([done, pending], () => stats, { maxConcurrentStreams: 1, priorityReward: 'done' }, now)
+	expect(plan.selected.map(item => item.title)).toEqual(['pending'])
+	expect(plan.rows.find(row => row.channel === 'done')?.remainingMinutes).toBe(0)
 })

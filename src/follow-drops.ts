@@ -153,6 +153,7 @@ export class FollowDrops {
 		await this.loadKnown()
 		if (this.configPath) this.twitch.config.scheduler = validateConfig(await readConfig(this.configPath)).scheduler ?? {}
 		this.scanWarnings = []
+		for (const [key, item] of this.known) if (item.stream.drop.kind !== 'reward-group' || !item.badgeIds?.length) this.known.delete(key)
 		const live = await this.twitch.followedLive()
 		const inventory = await this.twitch.inventory()
 		const owned = await this.twitch.badges()
@@ -176,30 +177,6 @@ export class FollowDrops {
 				const task = { channels: [channel], categoryIds: [] }
 				const stream = (await this.twitch.streams(task))[0]
 				if (!stream) continue
-				const data = await this.twitch.gql('DropsHighlightService_AvailableDrops', { channelID: channel.id })
-				for (const campaign of data.channel?.viewerDropCampaigns ?? []) {
-					if (campaign.game && campaign.game.id !== stream.game_id) continue
-					for (const advertised of campaign.timeBasedDrops ?? []) {
-						const progress = inventory.find(c => c.id === campaign.id)?.timeBasedDrops?.find(d => d.id === advertised.id)
-						const drop = { ...advertised, self: progress?.self ?? advertised.self ?? null }
-						if (!eligibleDrop(campaign, drop)) continue
-						candidates.push({
-							stream: { ...stream, drop: { id: drop.id, campaignId: campaign.id } },
-							title:
-								drop.benefitEdges
-									?.map(e => e.benefit?.name)
-									.filter(Boolean)
-									.join(', ') || drop.id,
-							minutes: drop.requiredMinutesWatched,
-							watched: drop.self?.currentMinutesWatched ?? 0,
-							end: Math.min(Date.parse(drop.endAt), campaign.endAt ? Date.parse(campaign.endAt) : Infinity),
-							start: Math.max(Date.parse(drop.startAt), campaign.startAt ? Date.parse(campaign.startAt) : -Infinity),
-							claimed: false,
-							live: true,
-							instance: drop.self?.dropInstanceID
-						})
-					}
-				}
 				// Channel watch badges use the newer reward-group API, outside the global badge catalog.
 				for (const campaign of (await this.twitch.channelCampaigns(channel.id)) ?? []) {
 					if (
@@ -222,6 +199,7 @@ export class FollowDrops {
 							continue
 						}
 						if (
+							!badges.length ||
 							group.progressCriteria?.requirementType !== 'WATCH' ||
 							!req?.minutesWatched ||
 							req.subs ||
@@ -239,7 +217,7 @@ export class FollowDrops {
 						candidates.push({
 							stream: { ...stream, drop: { id: group.id, campaignId: campaign.id, kind: 'reward-group' } },
 							title: campaign.name
-								? campaign.name + ' / WATCH'
+								? campaign.name
 								: badges.length
 									? badges.map(badge => badge.replace(/:\d+$/, '')).join(', ')
 									: 'WATCH reward ' + group.id,
@@ -463,6 +441,10 @@ export class FollowDrops {
 						await this.earned(item)
 						continue
 					}
+					if (item.watched >= item.minutes) {
+						this.sessions.delete(item.stream.user_id)
+						this.nextPlan = 0
+					}
 					if (item.watched >= item.minutes && reference.kind !== 'reward-group' && progress.dropInstanceID) {
 						await this.twitch.claimDrop(progress.dropInstanceID)
 						await this.updateProgress(item, 'Запрошено получение, ожидаю подтверждения Twitch')
@@ -471,6 +453,7 @@ export class FollowDrops {
 					}
 				}
 			}
+			if (!this.sessions.has(item.stream.user_id)) continue
 			const parallel = this.sessions.size > 1
 			if (parallel && isPriority(item, this.twitch.config.scheduler?.priorityReward) && Date.now() - session.lastProgress >= 180000) {
 				this.parallelBlockedUntil = Date.now() + 1800000
