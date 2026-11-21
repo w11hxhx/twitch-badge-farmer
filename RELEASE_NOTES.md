@@ -1,6 +1,8 @@
-# Twitch Badge Farmer v1.4.1
+# Twitch Badge Farmer v1.4.2
 
 ## Русский
+
+- Компактное меню Telegram без служебных списков добавленных и исключённых каналов.
 
 - Просроченное подтверждение нажатия Telegram больше не мешает открыть меню или применить действие.
 - Добавлена обработка обновлений от единого получателя общего бота без запуска второго `getUpdates`.
@@ -8,6 +10,8 @@
 - Фарм по-прежнему ограничен креаторскими бейджами каналов.
 
 ## English
+
+- Compact Telegram menus without administrative added/excluded channel lists.
 
 - An expired Telegram callback acknowledgement no longer prevents menus or actions from working.
 - Shared bots can forward updates from one existing consumer without starting a second `getUpdates` loop.

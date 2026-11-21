@@ -183,7 +183,7 @@ export class TelegramControl {
 		if (command === 'channels')
 			return this.panel(
 				account,
-				`@${config.login}\nПриоритетный бейдж: ${config.scheduler?.priorityReward ?? '—'}\nПриоритетный канал: ${config.scheduler?.priorityChannel ?? '—'}\n\nФолловы: автоматически\nДобавлены: ${config.channels?.added.map(c => c.login).join(', ') || '—'}\nИсключены: ${config.channels?.excluded.join(', ') || '—'}`
+				`@${config.login}\nПриоритетный бейдж: ${config.scheduler?.priorityReward ?? '—'}\nПриоритетный канал: ${config.scheduler?.priorityChannel ?? '—'}`
 			)
 		if (!['add', 'remove', 'priority_badge', 'priority_channel'].includes(command)) return
 		try {
