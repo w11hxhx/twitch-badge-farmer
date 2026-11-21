@@ -3,6 +3,7 @@ import type { StreamHistory } from './history.ts'
 
 export interface SchedulerSettings {
 	priorityReward?: string
+	priorityChannel?: string
 	maxConcurrentStreams?: 1 | 2
 	historyEnabled?: boolean
 }
@@ -89,6 +90,7 @@ export function planSchedule(
 	scored.sort(
 		(a, b) =>
 			Number(b.row.priority) - Number(a.row.priority) ||
+			Number(b.row.channel === settings.priorityChannel) - Number(a.row.channel === settings.priorityChannel) ||
 			Number(['unlikely', 'expired'].includes(a.row.risk)) - Number(['unlikely', 'expired'].includes(b.row.risk)) ||
 			a.latestStart - b.latestStart ||
 			a.item.end - b.item.end ||

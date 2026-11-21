@@ -1,6 +1,7 @@
 import type { Config } from './types.ts'
 import { readFile, writeFile, rename } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { controlKeyboard } from './telegram-control.ts'
 
 export class Notifications {
 	private sent = new Map<string, number>()
@@ -52,6 +53,7 @@ export class Notifications {
 						chat_id: telegram.chatId,
 						...(editing ? { message_id: this.progressId } : { disable_notification: true }),
 						text,
+						...(telegram.controls ? { reply_markup: controlKeyboard } : {}),
 						link_preview_options: { is_disabled: true }
 					}),
 					signal: AbortSignal.timeout(10_000),

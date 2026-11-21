@@ -38,6 +38,18 @@ export function validateConfig(input: unknown): Config {
 	config.token = config.token.replace(/^oauth:/i, '').trim()
 	if (record.followDrops !== undefined && typeof record.followDrops !== 'boolean') throw new Error('Config | followDrops must be boolean')
 	config.followDrops = record.followDrops === true
+	if (record.channels !== undefined) {
+		const value = record.channels as Config['channels']
+		if (
+			!value ||
+			!Array.isArray(value.added) ||
+			!Array.isArray(value.excluded) ||
+			value.added.some(c => !c || !/^\d+$/.test(c.id) || !/^[a-z0-9_]{1,25}$/.test(c.login)) ||
+			value.excluded.some(c => typeof c !== 'string' || !/^[a-z0-9_]{1,25}$/.test(c))
+		)
+			throw new Error('Config | Invalid channels')
+		config.channels = value
+	}
 	if (record.scheduler !== undefined) {
 		if (!record.scheduler || typeof record.scheduler !== 'object') throw new Error('Config | Invalid scheduler')
 		const scheduler = record.scheduler as Record<string, unknown>
@@ -49,12 +61,19 @@ export function validateConfig(input: unknown): Config {
 			throw new Error('Config | historyEnabled must be boolean')
 		config.scheduler = { maxConcurrentStreams: scheduler.maxConcurrentStreams === 1 ? 1 : 2, historyEnabled: scheduler.historyEnabled !== false }
 		if (typeof scheduler.priorityReward === 'string') config.scheduler.priorityReward = scheduler.priorityReward.trim()
+		if (scheduler.priorityChannel !== undefined) {
+			if (typeof scheduler.priorityChannel !== 'string' || !/^[a-z0-9_]{1,25}$/.test(scheduler.priorityChannel))
+				throw new Error('Config | Invalid priorityChannel')
+			config.scheduler.priorityChannel = scheduler.priorityChannel
+		}
 	}
 	if (record.notifications !== undefined) {
 		const n = record.notifications as NonNullable<Config['notifications']>
 		if (!n || typeof n !== 'object') throw new Error('Config | Invalid notifications')
 		if (n.telegram && (!/^\d+:[A-Za-z0-9_-]+$/.test(n.telegram.token) || !/^-?\d+$/.test(n.telegram.chatId)))
 			throw new Error('Config | Invalid Telegram settings')
+		if (n.telegram?.controls !== undefined && typeof n.telegram.controls !== 'boolean') throw new Error('Config | Invalid Telegram controls')
+		if (n.telegram?.controls && !/^[1-9]\d*$/.test(n.telegram.chatId)) throw new Error('Config | Telegram controls require a private chat')
 		try {
 			for (const destination of [n.discord && n.discord.webhook, n.webhook && n.webhook.url]) {
 				if (destination === undefined) continue

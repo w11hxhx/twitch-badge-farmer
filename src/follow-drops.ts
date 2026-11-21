@@ -5,6 +5,7 @@ import { Histories } from './history.ts'
 import { isPriority, planSchedule, rewardKey } from './scheduler.ts'
 import { readConfig, validateConfig } from './config.ts'
 import { readFile, writeFile, rename } from 'node:fs/promises'
+import { TelegramControl } from './telegram-control.ts'
 
 export function eligibleDrop(campaign: Campaign, drop: Drop, now = Date.now()) {
 	return (
@@ -125,6 +126,7 @@ export class FollowDrops {
 	private nextScan = 0
 	private cooldown = new Map<string, number>()
 	private notifications: Notifications
+	private controls?: TelegramControl
 	constructor(
 		private twitch: Twitch,
 		notificationStatePath?: string,
@@ -133,6 +135,18 @@ export class FollowDrops {
 	) {
 		this.notifications = new Notifications(twitch.config.notifications, fetch, notificationStatePath)
 		this.histories = new Histories(configPath ? configPath + '.history.state.json' : undefined, fetch, readOnly)
+		const telegram = twitch.config.notifications?.telegram
+		if (!readOnly && configPath && telegram?.controls)
+			this.controls = new TelegramControl(
+				telegram.token,
+				[{ path: configPath, chatId: telegram.chatId }],
+				configPath + '.telegram-control.json',
+				fetch,
+				async () => {
+					this.nextScan = 0
+					this.nextPlan = 0
+				}
+			)
 	}
 	rows() {
 		return rewardRows(this.candidates)
@@ -151,10 +165,19 @@ export class FollowDrops {
 	}
 	async scan() {
 		await this.loadKnown()
-		if (this.configPath) this.twitch.config.scheduler = validateConfig(await readConfig(this.configPath)).scheduler ?? {}
+		if (this.configPath) {
+			const fresh = validateConfig(await readConfig(this.configPath))
+			this.twitch.config.scheduler = fresh.scheduler ?? {}
+			if (fresh.channels) this.twitch.config.channels = fresh.channels
+			else delete this.twitch.config.channels
+		}
 		this.scanWarnings = []
 		for (const [key, item] of this.known) if (item.stream.drop.kind !== 'reward-group' || !item.badgeIds?.length) this.known.delete(key)
-		const live = await this.twitch.followedLive()
+		const excludedChannels = new Set(this.twitch.config.channels?.excluded ?? [])
+		for (const [key, item] of this.known) if (excludedChannels.has(item.stream.user_login)) this.known.delete(key)
+		for (const [key, session] of this.sessions) if (excludedChannels.has(session.item.stream.user_login)) this.sessions.delete(key)
+		const channels = [...(await this.twitch.followedLive()), ...(this.twitch.config.channels?.added ?? [])]
+		const live = [...new Map(channels.filter(c => !excludedChannels.has(c.login)).map(c => [c.id, c])).values()]
 		const inventory = await this.twitch.inventory()
 		const owned = await this.twitch.badges()
 		const candidates: Candidate[] = []
@@ -358,6 +381,7 @@ export class FollowDrops {
 		this.nextPlan = 0
 	}
 	async step() {
+		await this.controls?.poll()
 		if (Date.now() >= this.nextScan) await this.scan()
 		if (Date.now() >= this.nextPlan) {
 			const plan = this.plan()

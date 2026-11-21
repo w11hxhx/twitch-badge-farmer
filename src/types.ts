@@ -4,8 +4,9 @@ export interface Config {
 	client_id: string
 	token: string
 	followDrops?: boolean
+	channels?: { added: Channel[]; excluded: string[] }
 	scheduler?: import('./scheduler.ts').SchedulerSettings
-	notifications?: { telegram?: { token: string; chatId: string }; discord?: { webhook: string }; webhook?: { url: string } }
+	notifications?: { telegram?: { token: string; chatId: string; controls?: boolean }; discord?: { webhook: string }; webhook?: { url: string } }
 }
 
 export interface Channel {

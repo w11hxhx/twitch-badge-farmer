@@ -91,7 +91,7 @@ Notifications are optional. Add only the destinations you want to your config:
 ```json
 {
 	"notifications": {
-		"telegram": { "token": "123456:BOT_TOKEN", "chatId": "123456" },
+		"telegram": { "token": "123456:BOT_TOKEN", "chatId": "123456", "controls": true },
 		"discord": { "webhook": "https://discord.com/api/webhooks/123456/WEBHOOK_TOKEN" },
 		"webhook": { "url": "https://example.com/private-hook" }
 	}
@@ -104,6 +104,29 @@ Discord and HTTPS webhooks receive reward events. Test configured destinations:
 ```sh
 ./badge-farmer --test-notifications
 ```
+
+### Telegram controls
+
+Set `notifications.telegram.controls: true` and use a private chat with the bot.
+Buttons on the progress message add/remove channels and select a priority badge or channel.
+The “Badges” button lists available badges for selection. You can also send:
+
+```text
+/add pwgood
+/remove channel_login
+/priority_badge PepeLand 11 START
+/priority_channel pwgood
+/channels
+/menu
+/cancel
+```
+
+Use `none` to clear either priority. Removed channels are excluded from automatic
+follow discovery; `/add` restores them or adds a channel outside your follows.
+The pinned badge takes precedence over the pinned channel. Settings survive restarts.
+Commands are accepted only from the configured private chat's owner.
+Run only one update consumer per bot token; webhook delivery or another polling
+application using the same token conflicts with Telegram controls.
 
 ## How it works
 
@@ -130,8 +153,8 @@ Requires Bun 1.4.3 or newer. Output: `dist/badge-farmer` (Windows: `.exe`).
 
 ## Scope and limitations
 
-The followed-channel mode supports ordinary watch-time Drops and single-stage WATCH
-reward groups. Paid rewards are skipped. Set `followDrops: false` to use the original
+The followed-channel mode collects only creator channel badges from single-stage WATCH
+reward groups. Game items, coins, emotes and other Drops are skipped. Set `followDrops: false` to use the original
 catalog-based global badge collector, including its multi-day progression support.
 
 No planner can guarantee every deadline: a channel can stay offline, end early,

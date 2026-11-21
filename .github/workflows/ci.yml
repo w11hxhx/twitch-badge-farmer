@@ -28,9 +28,10 @@ jobs:
                     - os: ubuntu-24.04
                       platform: linux-x64
                       binary: badge-farmer
-                    - os: macos-15
+                    - os: ubuntu-24.04
                       platform: macos-arm64
                       binary: badge-farmer
+                      cross: true
                     - os: macos-15-intel
                       platform: macos-x64
                       binary: badge-farmer
@@ -53,12 +54,18 @@ jobs:
               run: bun run format:check
 
             - name: Check types and build
+              if: ${{ !matrix.cross }}
               run: bun run build
+
+            - name: Build macOS ARM64
+              if: matrix.cross
+              run: bun run typecheck && bun build --compile --sourcemap src/index.ts --target=bun-darwin-arm64 --outfile dist/badge-farmer
 
             - name: Test followed Drops and notifications
               run: bun test src
 
             - name: Check executable
+              if: ${{ !matrix.cross }}
               run: ./dist/${{ matrix.binary }} --help
 
             - name: Package Windows executable
