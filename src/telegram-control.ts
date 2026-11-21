@@ -5,17 +5,14 @@ import { readConfig, validateConfig } from './config.ts'
 export const controlKeyboard = {
 	inline_keyboard: [
 		[
-			{ text: 'Каналы', callback_data: 'bf:channels' },
-			{ text: 'Бейджи', callback_data: 'bf:badges:0' }
+			{ text: '↻ Список', callback_data: 'bf:channels' },
+			{ text: '★ Приоритет', callback_data: 'bf:badges:0', style: 'primary' }
 		],
 		[
-			{ text: '+ Канал', callback_data: 'bf:add' },
-			{ text: '− Канал', callback_data: 'bf:remove' }
+			{ text: '＋ Добавить', callback_data: 'bf:add', style: 'success' },
+			{ text: '− Удалить', callback_data: 'bf:remove', style: 'danger' }
 		],
-		[
-			{ text: 'Приоритет бейджа', callback_data: 'bf:badge' },
-			{ text: 'Приоритет канала', callback_data: 'bf:channel' }
-		]
+		[{ text: 'Приоритет канала', callback_data: 'bf:channel' }]
 	]
 }
 type Account = { path: string; chatId: string }
@@ -146,7 +143,8 @@ export class TelegramControl {
 							.map(r => [{ text: r.reward.slice(0, 45) + ' · ' + r.channel, callback_data: 'bf:pick:' + digest(r.id) }]),
 						...(start ? [[{ text: '←', callback_data: 'bf:badges:' + (page - 1) }]] : []),
 						...(rows.length > start + 8 ? [[{ text: '→', callback_data: 'bf:badges:' + (page + 1) }]] : []),
-						[{ text: 'Снять приоритет', callback_data: 'bf:clearbadge' }]
+						[{ text: 'Снять приоритет', callback_data: 'bf:clearbadge' }],
+						[{ text: '← К списку', callback_data: 'bf:channels' }]
 					]
 				})
 			} else if (action === 'clearbadge') text = '/priority_badge none'
@@ -180,11 +178,13 @@ export class TelegramControl {
 				'Управление Twitch Badge Farmer\n/add канал\n/remove канал\n/priority_badge название или ID\n/priority_channel канал\n/channels\nnone — снять приоритет'
 			)
 		}
-		if (command === 'channels')
+		if (command === 'channels') {
+			delete this.state.pending[account.chatId]
 			return this.panel(
 				account,
 				`@${config.login}\nПриоритетный бейдж: ${config.scheduler?.priorityReward ?? '—'}\nПриоритетный канал: ${config.scheduler?.priorityChannel ?? '—'}`
 			)
+		}
 		if (!['add', 'remove', 'priority_badge', 'priority_channel'].includes(command)) return
 		try {
 			if (!value || value.length > 200) throw new Error('Укажите значение (до 200 символов).')
