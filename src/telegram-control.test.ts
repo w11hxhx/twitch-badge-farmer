@@ -5,6 +5,34 @@ import { join } from 'node:path'
 import { TelegramControl, channelLogin } from './telegram-control.ts'
 import { validateConfig } from './config.ts'
 
+test('shared bot routing survives restart and an expired callback acknowledgement', async () => {
+	const dir = await mkdtemp(join(tmpdir(), 'badge-shared-control-'))
+	try {
+		const path = join(dir, 'config.json'),
+			state = join(dir, 'state.json')
+		await writeFile(path, JSON.stringify({ id: '1', login: 'owner', client_id: 'client', token: 'token' }))
+		const methods: string[] = []
+		const request = (async (url: any) => {
+			methods.push(String(url))
+			if (String(url).endsWith('answerCallbackQuery')) return Response.json({ ok: false, description: 'query is too old' }, { status: 400 })
+			return Response.json({ ok: true, result: { message_id: 55 } })
+		}) as typeof fetch
+		const first = new TelegramControl('token', [{ path, chatId: '100' }], state, request)
+		await first.accept({
+			update_id: 1,
+			callback_query: { id: 'old', data: 'bf:remove', from: { id: 100 }, message: { message_id: 7, chat: { id: 100, type: 'private' } } }
+		})
+		const resumed = new TelegramControl('token', [{ path, chatId: '100' }], state, request)
+		await resumed.accept({ update_id: 2, message: { text: 'pwgood', from: { id: 100 }, chat: { id: 100, type: 'private' } } })
+		expect(JSON.parse(await readFile(path, 'utf8')).channels.excluded).toEqual(['pwgood'])
+		expect(methods.filter(m => m.endsWith('/sendMessage'))).toHaveLength(1)
+		expect(methods.filter(m => m.endsWith('/editMessageText'))).toHaveLength(1)
+		expect(methods.some(m => m.endsWith('/getUpdates'))).toBe(false)
+	} finally {
+		await rm(dir, { recursive: true, force: true })
+	}
+})
+
 test('Telegram controls isolate accounts, persist edits and ignore unauthorized users', async () => {
 	const dir = await mkdtemp(join(tmpdir(), 'badge-control-'))
 	try {

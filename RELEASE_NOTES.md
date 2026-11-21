@@ -1,17 +1,15 @@
-# Twitch Badge Farmer v1.4.0
+# Twitch Badge Farmer v1.4.1
 
 ## Русский
 
-- Фармятся только креаторские бейджи каналов за просмотр. Игровые Drops, монеты и остальные награды исключены, в том числе из сохранённой очереди.
-- Telegram: кнопки добавления/удаления каналов, список бейджей и выбор приоритетного бейджа или канала.
-- Команды `/add`, `/remove`, `/channels`, `/priority_badge`, `/priority_channel`, `/menu`, `/cancel`. `none` снимает приоритет.
-- Управление включается через `notifications.telegram.controls: true`; команды принимает только владелец указанного личного чата. Настройки сохраняются после перезапуска.
-- Просмотр при достижении 100% больше не занимает поток, даже если получение ещё ожидает подтверждения Twitch.
+- Просроченное подтверждение нажатия Telegram больше не мешает открыть меню или применить действие.
+- Добавлена обработка обновлений от единого получателя общего бота без запуска второго `getUpdates`.
+- Состояние меню и ожидаемый ввод сохраняются при такой передаче обновлений и восстанавливаются после перезапуска.
+- Фарм по-прежнему ограничен креаторскими бейджами каналов.
 
 ## English
 
-- Farms only creator channel watch badges. Game Drops, coins and other rewards are excluded, including from persisted queues.
-- Telegram buttons for adding/removing channels, browsing badges, and choosing a priority badge or channel.
-- Commands: `/add`, `/remove`, `/channels`, `/priority_badge`, `/priority_channel`, `/menu`, `/cancel`. Use `none` to clear a priority.
-- Enable with `notifications.telegram.controls: true`. Only the configured private chat owner can change settings; settings persist across restarts.
-- Fully watched rewards no longer consume a viewing slot while Twitch claim confirmation is pending.
+- An expired Telegram callback acknowledgement no longer prevents menus or actions from working.
+- Shared bots can forward updates from one existing consumer without starting a second `getUpdates` loop.
+- Forwarded-update menus and pending input persist across restarts.
+- Farming remains limited to creator channel badges.

@@ -120,7 +120,13 @@ export class TelegramControl {
 			a => a.chatId === String(message?.chat.id) && a.chatId === String(sender?.id) && message?.chat.type === 'private'
 		)
 		if (!account) return
-		if (callback) await this.api('answerCallbackQuery', { callback_query_id: callback.id })
+		if (callback) {
+			try {
+				await this.api('answerCallbackQuery', { callback_query_id: callback.id })
+			} catch {
+				/* A delayed callback acknowledgement must not discard the requested action. */
+			}
+		}
 		const config = validateConfig(await readConfig(account.path))
 		let text = update.message?.text?.trim() ?? ''
 		if (callback?.data?.startsWith('bf:')) {
@@ -251,5 +257,18 @@ export class TelegramControl {
 		} catch {
 			this.nextPoll = Math.max(this.nextPoll, Date.now() + 15000)
 		}
+	}
+	// Shared bots can route updates from their existing consumer without a second getUpdates loop.
+	async accept(update: Update) {
+		if (!this.loaded) {
+			try {
+				this.state = JSON.parse(await readFile(this.statePath, 'utf8'))
+			} catch (error) {
+				if (!(error instanceof Error) || error.code !== 'ENOENT') throw new Error('Telegram control state unreadable')
+			}
+			this.loaded = true
+		}
+		await this.handle(update)
+		await atomic(this.statePath, this.state)
 	}
 }
