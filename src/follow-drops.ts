@@ -178,9 +178,14 @@ export class FollowDrops {
 		for (const [key, session] of this.sessions) if (excludedChannels.has(session.item.stream.user_login)) this.sessions.delete(key)
 		const channels = [...(await this.twitch.followedLive()), ...(this.twitch.config.channels?.added ?? [])]
 		const live = [...new Map(channels.filter(c => !excludedChannels.has(c.login)).map(c => [c.id, c])).values()]
+		const addedIds = new Set(this.twitch.config.channels?.added.map(c => c.id) ?? [])
+		for (const [key, item] of this.known)
+			if (this.twitch.followedIds && !this.twitch.followedIds.has(item.stream.user_id) && !addedIds.has(item.stream.user_id))
+				this.known.delete(key)
 		const inventory = await this.twitch.inventory()
 		const owned = await this.twitch.badges()
 		const candidates: Candidate[] = []
+		const scanned = new Set<string>()
 		const excluded = new Set<string>()
 		let pulse = Date.now()
 		for (const channel of live) {
@@ -201,7 +206,10 @@ export class FollowDrops {
 				const stream = (await this.twitch.streams(task))[0]
 				if (!stream) continue
 				// Channel watch badges use the newer reward-group API, outside the global badge catalog.
-				for (const campaign of (await this.twitch.channelCampaigns(channel.id)) ?? []) {
+				this.twitch.channelRewards.delete(channel.id)
+				const campaigns = await this.twitch.channelCampaigns(channel.id)
+				if (campaigns === null) continue
+				for (const campaign of campaigns) {
 					if (
 						(campaign.startAt && Date.parse(campaign.startAt) > Date.now()) ||
 						(campaign.endAt && Date.parse(campaign.endAt) <= Date.now())
@@ -254,6 +262,7 @@ export class FollowDrops {
 						})
 					}
 				}
+				scanned.add(channel.id)
 			} catch (error) {
 				if (error instanceof Error && error.fatal) throw error
 				this.twitch.log.warn('Drops scan unavailable | ' + channel.login)
@@ -282,6 +291,8 @@ export class FollowDrops {
 			}
 		}
 		this.candidates = merged
+		const available = new Set(merged.map(item => item.stream.user_id + ':' + rewardKey(item)))
+		for (const [key, item] of this.known) if (scanned.has(item.stream.user_id) && !available.has(key)) this.known.delete(key)
 		for (const item of this.known.values()) item.live = false
 		for (const key of excluded) this.known.delete(key)
 		for (const item of merged) this.known.set(item.stream.user_id + ':' + rewardKey(item), item)
@@ -367,6 +378,9 @@ export class FollowDrops {
 		this.twitch.playback = null
 		this.nextPlan = 0
 		await this.persist()
+	}
+	async refreshIfDue() {
+		if (Date.now() >= this.nextScan) await this.scan()
 	}
 	private async watchSession(session: { item: Candidate; playback: Twitch['playback'] }) {
 		const saved = this.twitch.playback

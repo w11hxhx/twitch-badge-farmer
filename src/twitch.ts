@@ -134,6 +134,7 @@ export function playlistSegments(text: string, base: string | URL) {
 }
 
 export class Twitch {
+	followedIds?: Set<string>
 	async followedChannels() {
 		const channels = new Map<string, { id: string; login: string; live: boolean }>()
 		let after: string | null = null
@@ -147,7 +148,10 @@ export class Twitch {
 			const follows = data.user?.follows
 			if (!follows || !Array.isArray(follows.edges)) throw new Error('Follows | Missing channel list')
 			for (const { node } of follows.edges) channels.set(node.id, { id: node.id, login: node.login, live: !!node.stream })
-			if (!follows.pageInfo.hasNextPage) return [...channels.values()]
+			if (!follows.pageInfo.hasNextPage) {
+				this.followedIds = new Set(channels.keys())
+				return [...channels.values()]
+			}
 			after = follows.edges.at(-1)?.cursor ?? null
 			if (!after || cursors.has(after)) throw new Error('Follows | Invalid pagination')
 			cursors.add(after)

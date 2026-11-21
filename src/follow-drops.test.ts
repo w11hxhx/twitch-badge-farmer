@@ -9,6 +9,49 @@ import { mkdtemp, readFile, unlink, rmdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+test('rescans discover and remove badge rewards, preserve failures and drop unfollowed channels', async () => {
+	const twitch = new Twitch({ id: '1', login: 'owner', client_id: 'client', token: 'token', scheduler: { historyEnabled: false } })
+	twitch.followedLive = async () => [{ id: '2', login: 'channel' }]
+	twitch.streams = async () => [{ id: 'live', user_id: '2', user_login: 'channel', game_id: 'g', game_name: 'game', type: 'live' }]
+	twitch.inventory = async () => []
+	twitch.badges = async () => new Set()
+	let mode = 'available'
+	twitch.channelCampaigns = async () => {
+		expect(twitch.channelRewards.has('2')).toBe(false)
+		if (mode === 'failure') throw new Error('temporary failure')
+		if (mode === 'empty') return []
+		return [
+			{
+				id: 'campaign',
+				rewardGroups: [
+					{
+						id: mode,
+						rewards: [{ dropDetail: { badge: { setID: 'badge', version: '1' } } }],
+						progressCriteria: { requirementType: 'WATCH', requirements: { minutesWatched: 60 } },
+						self: { status: 'IN_PROGRESS', currentMinutesWatched: 12, grantCount: 0, hasPreconditionsMet: true }
+					}
+				]
+			}
+		]
+	}
+	const farmer = new FollowDrops(twitch)
+	await farmer.scan()
+	expect(farmer.plan().rows).toHaveLength(1)
+	mode = 'failure'
+	await farmer.scan()
+	expect(farmer.plan().rows).toHaveLength(1)
+	mode = 'empty'
+	await farmer.scan()
+	expect(farmer.plan().rows).toHaveLength(0)
+	mode = 'new-badge'
+	await farmer.scan()
+	expect(farmer.plan().rows).toHaveLength(1)
+	twitch.followedIds = new Set()
+	twitch.followedLive = async () => []
+	await farmer.scan()
+	expect(farmer.plan().rows).toHaveLength(0)
+})
+
 test('suspending for streaks releases playback and resumes the saved badge progress', async () => {
 	const directory = await mkdtemp(join(tmpdir(), 'streak-pause-')),
 		path = join(directory, 'config.json')
