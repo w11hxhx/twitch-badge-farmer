@@ -362,6 +362,12 @@ export class FollowDrops {
 		this.twitch.playback = null
 		this.nextPlan = 0
 	}
+	async suspend() {
+		this.sessions.clear()
+		this.twitch.playback = null
+		this.nextPlan = 0
+		await this.persist()
+	}
 	private async watchSession(session: { item: Candidate; playback: Twitch['playback'] }) {
 		const saved = this.twitch.playback
 		this.twitch.playback = session.playback

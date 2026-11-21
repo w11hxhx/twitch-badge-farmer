@@ -9,6 +9,56 @@ import { mkdtemp, readFile, unlink, rmdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+test('suspending for streaks releases playback and resumes the saved badge progress', async () => {
+	const directory = await mkdtemp(join(tmpdir(), 'streak-pause-')),
+		path = join(directory, 'config.json')
+	const config = {
+		id: '1',
+		login: 'owner',
+		client_id: 'client',
+		token: 'token',
+		scheduler: { maxConcurrentStreams: 1 as const, historyEnabled: false }
+	}
+	await Bun.write(path, JSON.stringify(config))
+	try {
+		const twitch = new Twitch(config)
+		twitch.followedLive = async () => [{ id: '2', login: 'channel' }]
+		twitch.streams = async () => [{ id: 'live', user_id: '2', user_login: 'channel', game_id: 'g', game_name: 'game', type: 'live' }]
+		twitch.inventory = async () => []
+		twitch.badges = async () => new Set()
+		twitch.channelCampaigns = async () => [
+			{
+				id: 'campaign',
+				rewardGroups: [
+					{
+						id: 'group',
+						rewards: [{ dropDetail: { badge: { setID: 'badge', version: '1' } } }],
+						progressCriteria: { requirementType: 'WATCH', requirements: { minutesWatched: 60 } },
+						self: { status: 'IN_PROGRESS', currentMinutesWatched: 12, grantCount: 0, hasPreconditionsMet: true }
+					}
+				]
+			}
+		]
+		let watched = 0
+		twitch.watch = async () => {
+			watched++
+		}
+		const farmer = new FollowDrops(twitch, undefined, path)
+		await farmer.step()
+		expect(watched).toBe(1)
+		await farmer.suspend()
+		const paused = JSON.parse(await readFile(path + '.status.json', 'utf8'))
+		expect(paused.activeChannels).toEqual([])
+		expect(paused.rewards[0].watchedMinutes).toBe(12)
+		await farmer.step()
+		expect(watched).toBe(2)
+		expect(JSON.parse(await readFile(path + '.status.json', 'utf8')).activeChannels).toEqual(['channel'])
+	} finally {
+		const { rm } = await import('node:fs/promises')
+		await rm(directory, { recursive: true, force: true })
+	}
+})
+
 test('round robin treats every channel equally and wraps', () => {
 	const items = ['pwgood', 'aaa', 'zzz'].map(user_login => ({ stream: { user_login } }))
 	expect(fairChoice(items, '')?.stream.user_login).toBe('aaa')
